@@ -73,7 +73,7 @@ feast = [
     "psycopg[binary]>=3.1.0",  # PostgreSQL (SQLAlchemy 2.x / Feast)
     "redis==5.0.1",
     "fastapi==0.108.0",
-    "uvicorn[standard]==0.34.0",  # Feast 0.57.0 requires >=0.30.6,<=0.34.0
+    "uvicorn[standard]==0.39.0",  # Feast 0.57.0 requires >=0.30.6,<=0.34.0
 ]
 
 # Computer Vision Dependencies (Enhanced for CVOps)
