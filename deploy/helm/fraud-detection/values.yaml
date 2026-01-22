@@ -1,0 +1,240 @@
+# Default values for fraud-detection
+# This is a YAML-formatted file.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# =============================================================================
+# Fraud Detection API
+# =============================================================================
+fraudApi:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: fraud-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8001
+
+  ingress:
+    enabled: false
+    className: nginx
+    annotations: {}
+    hosts:
+      - host: fraud-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  env:
+    PROMETHEUS_METRICS: "true"
+    SHADOW_MODE_ENABLED: "false"
+    AB_TEST_ENABLED: "false"
+    LOG_LEVEL: "INFO"
+
+  # Readiness and liveness probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8001
+    initialDelaySeconds: 30
+    periodSeconds: 10
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8001
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# =============================================================================
+# Dagster (Orchestration)
+# =============================================================================
+dagster:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: dagster-webserver
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+
+  env:
+    PIPELINE_MODE: "mlops"
+    DAGSTER_HOME: "/opt/dagster/dagster_home"
+
+# =============================================================================
+# Feature Store (Feast)
+# =============================================================================
+feast:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: feast-server
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 6566
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+# =============================================================================
+# MLflow (Model Registry)
+# =============================================================================
+mlflow:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: mlflow
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 5000
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+# =============================================================================
+# Redis (Online Feature Store)
+# =============================================================================
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+# =============================================================================
+# PostgreSQL (Dagster metadata, MLflow backend)
+# =============================================================================
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "dagster"
+    database: "dagster"
+  primary:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+    persistence:
+      enabled: true
+      size: 10Gi
+
+# =============================================================================
+# Monitoring
+# =============================================================================
+monitoring:
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+  grafana:
+    enabled: false  # Use external Grafana
+
+# =============================================================================
+# Secrets (use external secrets in production)
+# =============================================================================
+secrets:
+  lakefs:
+    accessKeyId: ""  # Set via --set or external secret
+    secretAccessKey: ""
+  mlflow:
+    trackingUri: "http://mlflow:5000"
+  feast:
+    redisHost: "redis-master"
+    redisPort: "6379"
+
+# =============================================================================
+# Service Account
+# =============================================================================
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# =============================================================================
+# Pod Security
+# =============================================================================
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: false
+
+# =============================================================================
+# Node Affinity
+# =============================================================================
+nodeSelector: {}
+tolerations: []
+affinity: {}

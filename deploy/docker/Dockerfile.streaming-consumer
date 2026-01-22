@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+LABEL maintainer="Fraud Detection MLOps"
+LABEL description="Standalone event-driven Kafka consumer for fraud streaming features"
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    kafka-python>=2.0.0 \
+    redis>=5.0.0
+
+# Copy consumer script from mlops module (new location)
+# Legacy path: src/streaming/fraud_streaming_consumer.py
+# New path: src/mlops/streaming/consumer.py
+COPY src/mlops/streaming/consumer.py /app/fraud_streaming_consumer.py
+
+# Environment variables with defaults
+ENV KAFKA_BOOTSTRAP_SERVERS=exp-kafka:9092
+ENV STREAMING_FEATURES_TOPIC=fraud.streaming.features
+ENV KAFKA_CONSUMER_GROUP=fraud-streaming-consumer
+ENV REDIS_HOST=exp-redis
+ENV REDIS_PORT=6379
+
+# Health check - verify Redis connectivity
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python -c "import redis; r=redis.Redis(host='${REDIS_HOST:-exp-redis}', port=int('${REDIS_PORT:-6379}')); r.ping()" || exit 1
+
+# Run the consumer
+CMD ["python", "fraud_streaming_consumer.py"]

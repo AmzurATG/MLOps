@@ -1,0 +1,9 @@
+# Dagster Workspace Configuration
+# Defines code location for pipeline discovery
+
+load_from:
+  - python_module:
+      module_name: src.pipelines
+      working_directory: /app
+      location_name: unified_mlops_platform
+      attribute: defs

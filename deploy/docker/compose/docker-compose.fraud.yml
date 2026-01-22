@@ -1,0 +1,263 @@
+# ============================================================================
+# FRAUD DETECTION USE CASE (MLOps)
+# Services specific to the fraud detection ML pipeline
+# ============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.core.yml -f docker-compose.fraud.yml up -d
+#
+# Requires: docker-compose.core.yml
+#
+# Includes:
+#   - MySQL (source database)
+#   - Debezium CDC (change data capture)
+#   - Fraud API (inference service)
+#   - ksqlDB init (fraud streaming features)
+#   - Feast init (feature store setup)
+#   - LakeFS webhook (MLOps events)
+# ============================================================================
+
+volumes:
+  exp-mysql-data:
+
+services:
+  # ==========================================================================
+  # SOURCE DATABASE
+  # ==========================================================================
+  exp-mysql:
+    image: mysql:8.0
+    container_name: exp-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: demo
+    volumes:
+      - exp-mysql-data:/var/lib/mysql
+      - ../../../config/database/mysql/init-mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "13307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # CDC (Change Data Capture)
+  # ==========================================================================
+  exp-debezium:
+    image: quay.io/debezium/connect:3.0
+    container_name: exp-debezium
+    ports:
+      - "8085:8083"
+    environment:
+      BOOTSTRAP_SERVERS: exp-kafka:9092
+      GROUP_ID: debezium-cluster
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      STATUS_STORAGE_TOPIC: debezium_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-debezium-init:
+    image: curlimages/curl:latest
+    container_name: exp-debezium-init
+    networks:
+      - exp-lakehouse
+    depends_on:
+      exp-debezium:
+        condition: service_started
+      exp-mysql:
+        condition: service_healthy
+    command: >
+      sh -c "
+      echo 'Waiting for Debezium Connect to be ready...';
+      until curl -sf http://exp-debezium:8083/connectors; do
+        echo '  Debezium not ready, retrying in 10s...';
+        sleep 10;
+      done;
+      echo 'Debezium Connect is ready!';
+      sleep 5;
+      echo 'Registering MySQL fraud connector...';
+      curl -X DELETE http://exp-debezium:8083/connectors/mysql-fraud-connector 2>/dev/null || true;
+      sleep 2;
+      for i in 1 2 3 4 5; do
+        if curl -sf -X POST http://exp-debezium:8083/connectors \
+          -H 'Content-Type: application/json' \
+          -d @/config/mysql-connector.json; then
+          echo 'MySQL fraud connector registered successfully!';
+          break;
+        else
+          echo \"  Attempt $$i failed, retrying in 10s...\";
+          sleep 10;
+        fi;
+      done;
+      echo 'Registering evaluation connector...';
+      curl -X DELETE http://exp-debezium:8083/connectors/mysql-evaluation-connector 2>/dev/null || true;
+      sleep 2;
+      curl -sf -X POST http://exp-debezium:8083/connectors \
+        -H 'Content-Type: application/json' \
+        -d @/config/evaluation-connector.json 2>/dev/null || echo 'Evaluation connector skipped (optional)';
+      echo 'Debezium initialization complete!';
+      "
+    volumes:
+      - ../../../config/streaming/debezium:/config
+    restart: "no"
+
+  # ==========================================================================
+  # STREAMING FEATURES (ksqlDB Init)
+  # ==========================================================================
+  exp-ksqldb-init:
+    image: confluentinc/ksqldb-cli:0.29.0
+    container_name: exp-ksqldb-init
+    volumes:
+      - ../../../config/streaming/ksqldb:/ksqldb-src:ro
+    depends_on:
+      exp-ksqldb-server:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo 'Copying ksqlDB scripts with proper permissions...'
+        mkdir -p /tmp/ksqldb
+        cp /ksqldb-src/*.sql /tmp/ksqldb/
+        cp /ksqldb-src/*.sh /tmp/ksqldb/
+        chmod 644 /tmp/ksqldb/*.sql
+        chmod 755 /tmp/ksqldb/*.sh
+        echo 'Running ksqlDB init script...'
+        /bin/bash /tmp/ksqldb/init_ksqldb.sh
+    environment:
+      KSQL_SERVER: http://exp-ksqldb-server:8088
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # STREAMING FEATURES TO REDIS (Event-Driven Consumer)
+  # ==========================================================================
+  exp-streaming-redis-consumer:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.streaming-consumer
+    container_name: exp-streaming-redis-consumer
+    volumes:
+      # Mount code for live updates during development
+      - ../../../src/mlops/streaming/consumer.py:/app/fraud_streaming_consumer.py:ro
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      STREAMING_FEATURES_TOPIC: fraud.streaming.features
+      KAFKA_CONSUMER_GROUP: fraud-streaming-consumer
+      REDIS_HOST: exp-redis
+      REDIS_PORT: 6379
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-redis:
+        condition: service_started
+      exp-ksqldb-init:
+        condition: service_completed_successfully
+    networks:
+      - exp-lakehouse
+    restart: unless-stopped
+
+  # ==========================================================================
+  # FRAUD DETECTION API
+  # ==========================================================================
+  exp-fraud-api:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.api
+    container_name: exp-fraud-api
+    ports:
+      - "18002:8001"
+    environment:
+      FEAST_REPO_PATH: /app/feast_repo
+      FEAST_REGISTRY_URI: postgresql://dagster:dagster@exp-postgres-dagster:5432/feast_registry
+      MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://exp-minio:9000
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password123
+      REDIS_HOST: exp-redis
+      REDIS_PORT: 6379
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      PROMETHEUS_METRICS: "true"
+      AB_TEST_ENABLED: "true"
+      AB_CONFIG_PATH: /app/ab_testing/config/experiments.yaml
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+    volumes:
+      - ../../../feast_repo:/app/feast_repo
+      - ../../../src/api:/app/src/api
+      - ../../../src/mlops:/app/src/mlops
+      - ../../../src/core:/app/src/core
+      - ../../../src/pipelines:/app/pipelines
+      - ../../../ab_testing:/app/ab_testing
+    depends_on:
+      - exp-redis
+      - exp-mlflow
+      - exp-trino
+    networks:
+      - exp-lakehouse
+    restart: "no"
+    command: uvicorn src.mlops.api.main:app --host 0.0.0.0 --port 8001
+
+  # ==========================================================================
+  # UNIFIED LAKEFS WEBHOOK (MLOps + CVOps Events)
+  # ==========================================================================
+  lakefs-webhook:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.webhook
+    container_name: unified-webhook
+    ports:
+      - "5000:5000"
+    environment:
+      # Trino connection
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      TRINO_USER: trino
+      TRINO_CATALOG: ${TRINO_CATALOG:-iceberg_dev}
+      # MLOps config
+      LAKEFS_WEBHOOK_SECRET: ${LAKEFS_WEBHOOK_SECRET:-}
+      MLOPS_REPOS: warehouse,bronze
+      # CVOps config (if used with cv overlay)
+      CVOPS_REPO: ${CVOPS_REPO:-cv-data}
+      CVOPS_BRANCH: ${CVOPS_BRANCH:-dev}
+      CVOPS_WEBHOOK_SECRET: ${CVOPS_WEBHOOK_SECRET:-}
+      # Security
+      VERIFY_WEBHOOK_SIGNATURE: ${VERIFY_WEBHOOK_SIGNATURE:-false}
+      # Dagster integration for triggering jobs
+      DAGSTER_GRAPHQL_URL: http://exp-dagster-webserver:3000/graphql
+    networks:
+      - exp-lakehouse
+    depends_on:
+      exp-trino:
+        condition: service_healthy
+      exp-dagster-webserver:
+        condition: service_started
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"

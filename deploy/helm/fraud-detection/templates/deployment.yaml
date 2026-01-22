@@ -1,0 +1,82 @@
+{{- if .Values.fraudApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-detection.fullname" . }}-api
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.fraudApi.autoscaling.enabled }}
+  replicas: {{ .Values.fraudApi.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "fraud-detection.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "fraud-detection.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "fraud-detection.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: fraud-api
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.fraudApi.image.repository }}:{{ .Values.fraudApi.image.tag }}"
+          imagePullPolicy: {{ .Values.fraudApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8001
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.fraudApi.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.fraudApi.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.fraudApi.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "fraud-detection.fullname" . }}-config
+          env:
+            - name: REDIS_HOST
+              value: {{ .Values.secrets.feast.redisHost | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.secrets.feast.redisPort | quote }}
+            - name: MLFLOW_TRACKING_URI
+              value: {{ .Values.secrets.mlflow.trackingUri | quote }}
+            {{- if .Values.secrets.lakefs.accessKeyId }}
+            - name: LAKEFS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fraud-detection.fullname" . }}-secrets
+                  key: lakefs-access-key-id
+            - name: LAKEFS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fraud-detection.fullname" . }}-secrets
+                  key: lakefs-secret-access-key
+            {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,482 @@
+# ============================================================================
+# CORE PLATFORM INFRASTRUCTURE
+# Base services required by all use cases (MLOps, CVOps, etc.)
+# ============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.core.yml up -d
+#
+# Includes:
+#   - Object Storage (MinIO)
+#   - Databases (PostgreSQL for LakeFS, Nessie, Dagster, MLflow)
+#   - Data Versioning (LakeFS)
+#   - Catalog (Nessie)
+#   - Query Engine (Trino)
+#   - Orchestration (Dagster)
+#   - Cache (Redis)
+#   - ML Registry (MLflow)
+#   - Streaming Infrastructure (Kafka with KRaft, ksqlDB)
+# ============================================================================
+
+x-common-env: &common-env
+  LAKEFS_SERVER: http://exp-lakefs:8000
+  LAKEFS_ENDPOINT: http://exp-lakefs:8000
+  LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+  LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+  AWS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+  AWS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+  AWS_REGION: us-east-1
+  S3_ENDPOINT: http://exp-lakefs:8000
+  MINIO_ENDPOINT: http://exp-minio:9000
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+  NESSIE_URL: http://exp-nessie:19120
+  TRINO_HOST: exp-trino
+  TRINO_PORT: 8080
+  TRINO_USER: trino
+  TRINO_CATALOG: iceberg_dev
+  WAREHOUSE_URI: s3://warehouse/
+  NESSIE_EXPERIMENT_BRANCH: ${NESSIE_EXPERIMENT_BRANCH:-experiment-v1}
+
+x-dagster-common: &dagster-common
+  build:
+    context: ../../..
+    dockerfile: deploy/docker/Dockerfile.dagster
+  environment: &dagster-env
+    <<: *common-env
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+    MLFLOW_S3_ENDPOINT_URL: http://exp-minio:9000
+    DAGSTER_HOME: /opt/dagster/dagster_home
+    DAGSTER_POSTGRES_HOST: exp-postgres-dagster
+    DAGSTER_POSTGRES_USER: dagster
+    DAGSTER_POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD:-dagster}
+    DAGSTER_POSTGRES_DB: dagster
+    FEAST_REPO_PATH: /app/feast_repo
+    FEAST_REGISTRY_URI: postgresql://dagster:dagster@exp-postgres-dagster:5432/feast_registry
+    REDIS_HOST: exp-redis
+    REDIS_PORT: 6379
+    MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+    KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+    LAKEHOUSE_BRONZE_REPO: ${LAKEHOUSE_BRONZE_REPO:-bronze}
+    LAKEHOUSE_WAREHOUSE_REPO: ${LAKEHOUSE_WAREHOUSE_REPO:-warehouse}
+    LAKEHOUSE_DEV_BRANCH: ${LAKEHOUSE_DEV_BRANCH:-dev}
+    LAKEHOUSE_MAIN_BRANCH: ${LAKEHOUSE_MAIN_BRANCH:-main}
+    JUPYTER_AUTO_MODE: ${JUPYTER_AUTO_MODE:-false}
+    JUPYTER_NOTEBOOK_PATH: ${JUPYTER_NOTEBOOK_PATH:-/app/notebooks/01_bronze_to_silver_FIXED.ipynb}
+    # Airbyte (abctl via Kind cluster - connected to exp-lakehouse network)
+    AIRBYTE_SERVER_URL: ${AIRBYTE_SERVER_URL:-http://airbyte-abctl-control-plane:80}
+  volumes:
+    # Mount entire src directory for hot-reload during development
+    - ../../../src:/app/src
+    - ../../../feature_registry:/app/feature_registry
+    - ../../../config:/app/config
+    - ../../../config/services/dagster/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml
+    - exp-dagster-storage:/opt/dagster/dagster_home/storage
+    - exp-dagster-logs:/opt/dagster/dagster_home/logs
+    - ../../../models:/app/models
+    - ../../../config/services/dagster/workspace.yaml:/app/workspace.yaml
+    - ../../../feast_repo:/app/feast_repo
+    - ../../../config/data-quality:/app/data_quality
+    - ../../../ab_testing:/app/ab_testing
+    - ../../../scripts:/app/scripts
+    - ../../../config/monitoring:/app/monitoring
+    - ../../../notebooks:/app/notebooks
+  networks:
+    - exp-lakehouse
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+networks:
+  exp-lakehouse:
+    driver: bridge
+    name: exp-lakehouse
+
+volumes:
+  # Storage
+  exp-minio-data:
+  # Databases
+  exp-lakefs-pg:
+  exp-nessie-pg:
+  exp-dagster-pg:
+  exp-mlflow-pg:
+  # Dagster
+  exp-dagster-storage:
+  exp-dagster-logs:
+  # Cache
+  exp-redis-data:
+  # MLflow
+  exp-mlflow-data:
+  # Streaming
+  exp-kafka-data:
+
+services:
+  # ==========================================================================
+  # OBJECT STORAGE
+  # ==========================================================================
+  exp-minio:
+    image: minio/minio:latest
+    container_name: exp-minio
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - exp-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 20s
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-minio-init:
+    image: minio/mc:latest
+    container_name: exp-minio-init
+    depends_on:
+      exp-minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc alias set minio http://exp-minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do sleep 1; done;
+      /usr/bin/mc mb minio/bronze --ignore-existing;
+      /usr/bin/mc mb minio/warehouse --ignore-existing;
+      /usr/bin/mc mb minio/lakefs --ignore-existing;
+      /usr/bin/mc mb minio/models --ignore-existing;
+      /usr/bin/mc mb minio/artifacts --ignore-existing;
+      echo 'MinIO core buckets initialized';
+      "
+    networks:
+      - exp-lakehouse
+
+  # ==========================================================================
+  # DATABASES
+  # ==========================================================================
+  exp-postgres-lakefs:
+    image: postgres:16-alpine
+    container_name: exp-postgres-lakefs
+    environment:
+      POSTGRES_USER: lakefs
+      POSTGRES_PASSWORD: lakefs
+      POSTGRES_DB: lakefs
+    volumes:
+      - exp-lakefs-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "lakefs"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-nessie:
+    image: postgres:16-alpine
+    container_name: exp-postgres-nessie
+    environment:
+      POSTGRES_USER: nessie
+      POSTGRES_PASSWORD: nessie
+      POSTGRES_DB: nessie
+    volumes:
+      - exp-nessie-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "nessie"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-dagster:
+    image: postgres:16-alpine
+    container_name: exp-postgres-dagster
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD:-dagster}
+      POSTGRES_DB: dagster
+    volumes:
+      - exp-dagster-pg:/var/lib/postgresql/data
+      - ../../../config/database/postgres/init-dagster-postgres.sql:/docker-entrypoint-initdb.d/init-dagster-postgres.sql
+    ports:
+      - "15433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dagster"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-mlflow:
+    image: postgres:16-alpine
+    container_name: exp-postgres-mlflow
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - exp-mlflow-pg:/var/lib/postgresql/data
+    ports:
+      - "15434:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mlflow"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # DATA VERSIONING & CATALOG
+  # ==========================================================================
+  exp-lakefs:
+    image: treeverse/lakefs:latest
+    container_name: exp-lakefs
+    ports:
+      - "18000:8000"
+    environment:
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: some_random_string_here
+      LAKEFS_DATABASE_TYPE: postgres
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: postgres://lakefs:lakefs@exp-postgres-lakefs:5432/lakefs?sslmode=disable
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: true
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://exp-minio:9000
+      LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION: false
+      LAKEFS_LOGGING_LEVEL: INFO
+      LAKEFS_STATS_ENABLED: false
+      # Enable LakeFS Actions for webhook triggers
+      LAKEFS_ACTIONS_ENABLED: "true"
+      LAKEFS_INSTALLATION_USER_NAME: admin
+      LAKEFS_INSTALLATION_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+    depends_on:
+      exp-postgres-lakefs:
+        condition: service_healthy
+      exp-minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-nessie:
+    image: projectnessie/nessie:latest
+    container_name: exp-nessie
+    ports:
+      - "29120:19120"
+    environment:
+      QUARKUS_HTTP_PORT: 19120
+      QUARKUS_PROFILE: prod
+      NESSIE_VERSION_STORE_TYPE: JDBC
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://exp-postgres-nessie:5432/nessie
+      QUARKUS_DATASOURCE_USERNAME: nessie
+      QUARKUS_DATASOURCE_PASSWORD: nessie
+    depends_on:
+      exp-postgres-nessie:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-trino:
+    image: trinodb/trino:475
+    container_name: exp-trino
+    ports:
+      - "18083:8080"
+    volumes:
+      - ../../../config/services/trino:/etc/trino:ro
+    environment:
+      <<: *common-env
+    depends_on:
+      exp-nessie:
+        condition: service_healthy
+      exp-lakefs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # DAGSTER ORCHESTRATION
+  # ==========================================================================
+  exp-dagster-webserver:
+    <<: *dagster-common
+    container_name: exp-dagster-webserver
+    command: dagster-webserver -h 0.0.0.0 -p 3000 -w /app/workspace.yaml
+    ports:
+      - "13000:3000"
+    depends_on:
+      exp-postgres-dagster:
+        condition: service_healthy
+      exp-dagster-daemon:
+        condition: service_started
+    restart: "no"
+
+  exp-dagster-daemon:
+    <<: *dagster-common
+    container_name: exp-dagster-daemon
+    command: dagster-daemon run -w /app/workspace.yaml
+    depends_on:
+      exp-postgres-dagster:
+        condition: service_healthy
+    restart: "no"
+
+  # ==========================================================================
+  # CACHE
+  # ==========================================================================
+  exp-redis:
+    image: redis:7-alpine
+    container_name: exp-redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - exp-redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # MLFLOW
+  # ==========================================================================
+  exp-mlflow:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.mlflow
+    container_name: exp-mlflow
+    ports:
+      - "15000:5000"
+    environment:
+      MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      MLFLOW_S3_ENDPOINT_URL: http://exp-minio:9000
+      MLFLOW_SERVER_ALLOWED_HOSTS: "localhost:5000,127.0.0.1:5000,exp-mlflow:5000,exp-mlflow,localhost:15000,127.0.0.1:15000"
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: http://localhost:15000
+      MLFLOW_TRACKING_INSECURE_TLS: "true"
+      GUNICORN_CMD_ARGS: "--bind=0.0.0.0:5000 --timeout=120 --forwarded-allow-ips='*' --access-logfile=-"
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri postgresql://mlflow:mlflow@exp-postgres-mlflow:5432/mlflow
+        --default-artifact-root s3://models/mlflow
+        --serve-artifacts
+    volumes:
+      - exp-mlflow-data:/mlflow
+    depends_on:
+      exp-minio:
+        condition: service_healthy
+      exp-postgres-mlflow:
+        condition: service_healthy
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # STREAMING INFRASTRUCTURE (Apache Kafka 4.0 - KRaft native)
+  # ==========================================================================
+  exp-kafka:
+    image: apache/kafka:4.0.0
+    container_name: exp-kafka
+    user: root
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      # KRaft mode configuration (Kafka 4.0 is KRaft-only)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@exp-kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Listeners
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://exp-kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Cluster ID (generated with: kafka-storage random-uuid)
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      # Topic settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Log dirs
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    volumes:
+      - exp-kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-ksqldb-server:
+    image: confluentinc/ksqldb-server:0.29.0
+    container_name: exp-ksqldb-server
+    ports:
+      - "8088:8088"
+    environment:
+      KSQL_BOOTSTRAP_SERVERS: exp-kafka:9092
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_KSQL_SERVICE_ID: fraud_ksqldb_
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: ""
+      KSQL_KSQL_STREAMS_AUTO_OFFSET_RESET: earliest
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-ksqldb-cli:
+    image: confluentinc/ksqldb-cli:0.29.0
+    container_name: exp-ksqldb-cli
+    depends_on:
+      exp-ksqldb-server:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    tty: true
+    networks:
+      - exp-lakehouse
+    restart: "no"

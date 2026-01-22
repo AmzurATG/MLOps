@@ -1,0 +1,167 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# Bronze Sources Configuration
+# Define source tables for ingestion - supports single or multiple tables
+#
+# NOTE: Catalog comes from TRINO_CATALOG environment variable (default: iceberg_dev)
+# Tables should be specified as schema.table - catalog is prepended at runtime
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Example 1: Single Source, Single Table (Current Setup)
+# ═════════════════════════════════════════════════════════════════════════════
+sources:
+  - name: fraud_detection
+    enabled: true
+    description: "Fraud transaction data from MySQL"
+    lakefs_repository: bronze
+    lakefs_branch: dev
+    tables:
+      - bronze_table: bronze.fraud_transactions
+        # The ingestion will search multiple paths for parquet files:
+        # - raw/demo/fraud_transactions/ (Airbyte default)
+        # - raw/fraud_transactions/
+        # - data/
+        # - (root)
+        source_path: raw/demo/fraud_transactions/*.parquet
+        description: "Main fraud transactions table"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Example 2: Single Source, Multiple Tables
+# Uncomment to enable MySQL multi-table ingestion
+# ═════════════════════════════════════════════════════════════════════════════
+#  - name: mysql_transactional
+#    enabled: true
+#    description: "MySQL transactional database"
+#    lakefs_repository: bronze
+#    lakefs_branch: dev
+#    tables:
+#      - bronze_table: bronze.mysql_transactions
+#        source_path: mysql/transactions/*.parquet
+#        description: "Transaction records"
+#        
+#      - bronze_table: bronze.mysql_customers
+#        source_path: mysql/customers/*.parquet
+#        description: "Customer master data"
+#        
+#      - bronze_table: bronze.mysql_merchants
+#        source_path: mysql/merchants/*.parquet
+#        description: "Merchant information"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Example 3: Multiple Sources
+# Uncomment to enable multi-source ingestion
+# ═════════════════════════════════════════════════════════════════════════════
+#  - name: postgresql_crm
+#    enabled: true
+#    description: "PostgreSQL CRM database"
+#    lakefs_repository: warehouse
+#    lakefs_branch: dev
+#    tables:
+#      - bronze_table: bronze.postgres_customer_profiles
+#        source_path: postgres/customer_profiles/*.parquet
+#        description: "Detailed customer profiles"
+#        
+#      - bronze_table: bronze.postgres_interactions
+#        source_path: postgres/interactions/*.parquet
+#        description: "Customer interaction history"
+#
+#  - name: kafka_events
+#    enabled: true
+#    description: "Real-time Kafka streams"
+#    lakefs_repository: bronze
+#    lakefs_branch: dev
+#    tables:
+#      - bronze_table: bronze.kafka_payment_events
+#        source_path: kafka/payment_events/*.parquet
+#        description: "Real-time payment event stream"
+#        
+#      - bronze_table: bronze.kafka_fraud_alerts
+#        source_path: kafka/fraud_alerts/*.parquet
+#        description: "Real-time fraud alerts"
+#
+#  - name: s3_logs
+#    enabled: true
+#    description: "S3 event logs"
+#    lakefs_repository: bronze
+#    lakefs_branch: dev
+#    tables:
+#      - bronze_table: bronze.s3_clickstream
+#        source_path: s3/clickstream/dt=*/hour=*/*.parquet
+#        description: "User clickstream events"
+#        partition_by: [dt, hour]
+#        
+#      - bronze_table: bronze.s3_api_logs
+#        source_path: s3/api_logs/dt=*/*.parquet
+#        description: "API access logs"
+#        partition_by: [dt]
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Example 4: External APIs and SaaS
+# ═════════════════════════════════════════════════════════════════════════════
+#  - name: external_apis
+#    enabled: false
+#    description: "External API data sources"
+#    lakefs_repository: bronze
+#    lakefs_branch: dev
+#    tables:
+#      - bronze_table: bronze.salesforce_accounts
+#        source_path: apis/salesforce/accounts/*.parquet
+#        description: "Salesforce account data"
+#        
+#      - bronze_table: bronze.stripe_charges
+#        source_path: apis/stripe/charges/*.parquet
+#        description: "Stripe payment charges"
+#        
+#      - bronze_table: bronze.segment_events
+#        source_path: apis/segment/events/*.parquet
+#        description: "Segment analytics events"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Configuration Notes
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Fields:
+#   name: Unique identifier for this source group
+#   enabled: Set to false to skip this source during ingestion
+#   lakefs_repository: LakeFS repository name
+#   lakefs_branch: LakeFS branch name
+#   tables: List of tables to ingest
+#     - bronze_table: Table name (schema.table) - catalog from TRINO_CATALOG env var
+#     - source_path: Path in LakeFS (supports wildcards)
+#     - description: Human-readable description
+#     - partition_by: Optional list of partition columns
+#
+# Path Patterns:
+#   data/*.parquet                    - All parquet files in data/
+#   mysql/*/2024-*/*.parquet         - Date-based partitions
+#   s3/logs/dt=*/hour=*/*.parquet    - Hive-style partitions
+#
+# Multiple Sources vs. Single Source:
+#   - Single source: All tables ingested in one LakeFS commit
+#   - Multiple sources: Each source gets its own commit
+#
+# Environment Variable Override:
+#   If BRONZE_TABLES env var is set, it takes precedence over this file.
+#   Format: table1:path1,table2:path2
+#   Example: bronze.fraud_transactions:data/*.parquet
+#
+# ═════════════════════════════════════════════════════════════════════════════
+# Usage Examples
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# 1. Start simple (single table):
+#    Keep only "fraud_detection" source enabled
+#
+# 2. Add more tables from same source:
+#    Uncomment "mysql_transactional" and add your tables
+#
+# 3. Add new source:
+#    Copy a source block, change name and paths
+#
+# 4. Disable source temporarily:
+#    Set enabled: false
+#
+# 5. Test configuration:
+#    python -c "import yaml; print(yaml.safe_load(open('config/bronze_sources.yaml')))"
+#
+# ═════════════════════════════════════════════════════════════════════════════

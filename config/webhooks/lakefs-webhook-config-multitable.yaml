@@ -1,0 +1,178 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# LakeFS Actions Configuration
+# Configure webhooks to notify Dagster on commits and reverts
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# File location: _lakefs_actions/dagster_webhooks.yaml
+# (Place in your LakeFS repository root)
+#
+# ═════════════════════════════════════════════════════════════════════════════
+
+name: dagster_integration
+description: Notify Dagster on commits and reverts for data sync
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Action 1: Notify on Revert (CRITICAL)
+# Triggers immediate cleanup when commit is reverted
+# ═════════════════════════════════════════════════════════════════════════════
+on:
+  post-revert:
+    branches:
+      - dev
+      - main
+      - experiment-*
+      - feature-*
+
+hooks:
+  - id: notify_dagster_revert
+    type: webhook
+    properties:
+      url: http://unified-webhook:5000/lakefs-webhook
+      timeout: 5s
+      query_params:
+        source: lakefs
+        event_type: revert
+      headers:
+        Content-Type: application/json
+        X-LakeFS-Signature: ${LAKEFS_WEBHOOK_SECRET}
+
+---
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Action 2: Notify on Commit (OPTIONAL)
+# Track new commits for audit trail
+# ═════════════════════════════════════════════════════════════════════════════
+name: track_commits
+description: Track new commits in Dagster
+
+on:
+  post-commit:
+    branches:
+      - dev
+      - experiment-*
+      - feature-*
+
+hooks:
+  - id: notify_dagster_commit
+    type: webhook
+    properties:
+      url: http://unified-webhook:5000/lakefs-webhook
+      timeout: 5s
+      query_params:
+        source: lakefs
+        event_type: commit
+      headers:
+        Content-Type: application/json
+        X-LakeFS-Signature: ${LAKEFS_WEBHOOK_SECRET}
+
+---
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Action 3: Notify on Merge (OPTIONAL)
+# Track branch merges
+# ═════════════════════════════════════════════════════════════════════════════
+name: track_merges
+description: Track branch merges in Dagster
+
+on:
+  post-merge:
+    branches:
+      - main
+      - dev
+
+hooks:
+  - id: notify_dagster_merge
+    type: webhook
+    properties:
+      url: http://unified-webhook:5000/lakefs-webhook
+      timeout: 5s
+      query_params:
+        source: lakefs
+        event_type: merge
+      headers:
+        Content-Type: application/json
+        X-LakeFS-Signature: ${LAKEFS_WEBHOOK_SECRET}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SETUP INSTRUCTIONS
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# 1. Create directory in your LakeFS repository:
+#    mkdir -p _lakefs_actions
+#
+# 2. Copy this file to:
+#    _lakefs_actions/dagster_webhooks.yaml
+#
+# 3. Set webhook secret in LakeFS environment:
+#    export LAKEFS_WEBHOOK_SECRET="your-secret-key-here"
+#
+# 4. Commit the actions file:
+#    lakectl fs upload \
+#      lakefs://bronze/dev/_lakefs_actions/dagster_webhooks.yaml \
+#      --source dagster_webhooks.yaml
+#
+# 5. Commit changes:
+#    lakectl commit lakefs://bronze/dev \
+#      -m "Add Dagster webhook integration"
+#
+# 6. Verify actions are loaded:
+#    lakectl actions list lakefs://bronze/dev
+#
+# 7. Test webhook (trigger a commit):
+#    lakectl commit lakefs://bronze/dev -m "Test webhook"
+#
+# 8. Check webhook logs:
+#    docker logs lakefs-webhook-receiver
+#
+# ═════════════════════════════════════════════════════════════════════════════
+# WEBHOOK PAYLOAD EXAMPLES
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Post-Revert Event:
+# {
+#   "event_type": "post-revert",
+#   "event_id": "unique-event-id",
+#   "event_time": "2024-12-05T10:30:00Z",
+#   "repository_id": "bronze",
+#   "branch_id": "dev",
+#   "commit_id": "new-commit-after-revert",
+#   "reverted_commit_id": "abc123...",
+#   "committer": "user@example.com"
+# }
+#
+# Post-Commit Event:
+# {
+#   "event_type": "post-commit",
+#   "event_id": "unique-event-id",
+#   "event_time": "2024-12-05T10:30:00Z",
+#   "repository_id": "bronze",
+#   "branch_id": "dev",
+#   "commit_id": "def456...",
+#   "committer": "user@example.com",
+#   "message": "Add new data files"
+# }
+#
+# ═════════════════════════════════════════════════════════════════════════════
+# TROUBLESHOOTING
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Webhook not triggering:
+#   1. Check LakeFS logs: docker logs lakefs
+#   2. Verify actions loaded: lakectl actions list
+#   3. Check network connectivity: curl http://lakefs-webhook:5000/health
+#   4. Verify signature secret matches in both LakeFS and webhook server
+#
+# Webhook receiving but not processing:
+#   1. Check webhook server logs: docker logs lakefs-webhook-receiver
+#   2. Check Dagster sensor: Dagster UI → Sensors → lakefs_webhook_sensor
+#   3. Query webhook events table:
+#      SELECT * FROM iceberg_dev.metadata.lakefs_webhook_events
+#      WHERE status = 'pending';
+#
+# Signature verification failing:
+#   1. Ensure LAKEFS_WEBHOOK_SECRET matches in:
+#      - LakeFS environment
+#      - Webhook server environment (.env)
+#   2. Check webhook server logs for signature errors
+#
+# ═════════════════════════════════════════════════════════════════════════════

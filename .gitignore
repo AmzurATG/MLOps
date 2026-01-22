@@ -1,0 +1,39 @@
+# Python cache / build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+.claude/
+venv/
+.venv/
+env/
+.env/
+.envrc
+.env
+.csv/
+.csv
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.joblib/
+# Local config / secrets
+*.sqlite3
+*.db
+.env.local
+*.secret
+

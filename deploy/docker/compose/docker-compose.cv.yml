@@ -1,0 +1,181 @@
+# ============================================================================
+# COMPUTER VISION USE CASE (CVOps)
+# Services specific to the object detection CV pipeline
+# ============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.core.yml -f docker-compose.cv.yml up -d
+#
+# Requires: docker-compose.core.yml
+#
+# Includes:
+#   - CV Detection API (YOLO inference)
+#   - CVOps Webhook Server (LakeFS events for cv-data repo)
+#   - CVOps Ingestion Consumer (Kafka to LakeFS)
+#   - Kafka CVOps Topic Init
+# ============================================================================
+
+volumes:
+  exp-cv-model-cache:
+
+services:
+  # ==========================================================================
+  # MINIO CV BUCKETS INIT
+  # ==========================================================================
+  exp-minio-cv-init:
+    image: minio/mc:latest
+    container_name: exp-minio-cv-init
+    depends_on:
+      exp-minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc alias set minio http://exp-minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do sleep 1; done;
+      /usr/bin/mc mb minio/cv-raw --ignore-existing;
+      /usr/bin/mc mb minio/cv-processed --ignore-existing;
+      echo 'MinIO CV buckets initialized';
+      "
+    networks:
+      - exp-lakehouse
+
+  # ==========================================================================
+  # KAFKA CVOPS TOPICS INIT
+  # ==========================================================================
+  exp-kafka-cvops-init:
+    image: apache/kafka:4.0.0
+    container_name: exp-kafka-cvops-init
+    networks:
+      - exp-lakehouse
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+    entrypoint: >
+      /bin/bash -c "
+      echo 'Creating CVOps Kafka topics...';
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --create --if-not-exists --topic cv.images.ingest --partitions 6 --replication-factor 1 --config retention.ms=604800000;
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --create --if-not-exists --topic cv.images.dlq --partitions 3 --replication-factor 1 --config retention.ms=2592000000;
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --create --if-not-exists --topic cv.images.validated --partitions 6 --replication-factor 1 --config retention.ms=259200000;
+      echo 'Listing all cv.* topics:';
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --list | grep '^cv\.';
+      echo 'CVOps Kafka topics created successfully!';
+      "
+    restart: "no"
+
+  # ==========================================================================
+  # CVOPS WEBHOOK SERVER
+  # NOTE: CVOps webhook is now handled by the unified lakefs-webhook service
+  # in docker-compose.yml (port 5000). Use /cvops-webhook or /webhook/cvops endpoint.
+  # ==========================================================================
+
+  # ==========================================================================
+  # CV DETECTION API
+  # ==========================================================================
+  exp-cv-api:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.cv
+    container_name: exp-cv-api
+    ports:
+      - "8002:8002"
+    environment:
+      # MLflow
+      MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+      CV_MODEL_NAME: yolo-object-detector
+      # Kafka for write-back
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      CV_WRITE_BACK: "true"
+      # Trino
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      # YOLO configuration
+      YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+      YOLO_CONFIDENCE: ${YOLO_CONFIDENCE:-0.25}
+      YOLO_MODEL_PATH: ${YOLO_MODEL_PATH:-yolov8n.pt}
+    volumes:
+      - ../../../src/api:/app/api:ro
+      - ../../../src/pipelines:/app/pipelines:ro
+      - exp-cv-model-cache:/root/.cache/ultralytics
+    # GPU support - uncomment for NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    depends_on:
+      - exp-mlflow
+      - exp-kafka
+      - exp-trino
+    networks:
+      - exp-lakehouse
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: "no"
+
+  # ==========================================================================
+  # CVOPS STREAMING INGESTION CONSUMER
+  # ==========================================================================
+  exp-cvops-ingest-consumer:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.cv-consumer
+    container_name: exp-cvops-ingest-consumer
+    networks:
+      - exp-lakehouse
+    environment:
+      # Kafka Configuration
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      CVOPS_KAFKA_INGEST_TOPIC: cv.images.ingest
+      CVOPS_KAFKA_DLQ_TOPIC: cv.images.dlq
+      CVOPS_KAFKA_VALIDATED_TOPIC: cv.images.validated
+      CVOPS_KAFKA_CONSUMER_GROUP: cvops-ingest-consumer
+      CVOPS_KAFKA_BATCH_SIZE: "100"
+      CVOPS_KAFKA_COMMIT_INTERVAL: "5"
+      # LakeFS Configuration
+      LAKEFS_SERVER: http://exp-lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-AKIAIOSFOLKFSSAMPLES}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY}
+      CVOPS_REPO: ${CVOPS_REPO:-cv-data}
+      CVOPS_BRANCH: ${CVOPS_BRANCH:-dev-cvops}
+      CVOPS_RAW_PREFIX: raw/images/
+      CVOPS_COPY_TO_LAKEFS: "true"
+      # Trino/Iceberg Configuration
+      TRINO_HOST: exp-trino
+      TRINO_PORT: "8080"
+      TRINO_USER: trino
+      TRINO_CATALOG: iceberg_dev
+      CVOPS_IMAGE_METADATA_TABLE: iceberg_dev.cv.image_metadata
+      # MinIO Configuration
+      MINIO_ENDPOINT: http://exp-minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-kafka-cvops-init:
+        condition: service_completed_successfully
+      exp-trino:
+        condition: service_healthy
+      exp-lakefs:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('exp-kafka', 9092)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    profiles:
+      - cvops-streaming

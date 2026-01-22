@@ -1,0 +1,16 @@
+# Requirements for Unified LakeFS Webhook Server
+# Handles both MLOps and CVOps webhook endpoints
+
+# Web Framework (FastAPI)
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Database
+trino>=0.328.0
+
+# Utilities
+requests>=2.31.0
+python-dotenv>=1.0.0
+httpx>=0.25.0

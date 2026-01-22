@@ -1,0 +1,171 @@
+# Prometheus Configuration for MLOps Platform
+# ════════════════════════════════════════════════════════════════════════════════
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'fraud-detection-mlops'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - exp-alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CORE SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'prometheus'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # APPLICATION METRICS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Fraud Detection API - Primary ML serving endpoint
+  - job_name: 'fraud-api'
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['exp-fraud-api:8001']
+        labels:
+          service: 'fraud-api'
+          tier: 'api'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'fraud-detection-api'
+
+  # CV Detection API - Computer vision inference
+  - job_name: 'cv-api'
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['exp-cv-api:8002']
+        labels:
+          service: 'cv-api'
+          tier: 'api'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'cv-detection-api'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DATA INFRASTRUCTURE
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Redis Exporter - Online feature store metrics
+  - job_name: 'redis'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['exp-redis-exporter:9121']
+        labels:
+          service: 'redis'
+          tier: 'cache'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'redis-feature-store'
+
+  # Kafka Exporter - Message queue metrics
+  - job_name: 'kafka'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['exp-kafka-exporter:9308']
+        labels:
+          service: 'kafka'
+          tier: 'streaming'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'kafka-broker'
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ML PLATFORM SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # NOTE: MLflow, Dagster, and Trino don't expose native Prometheus metrics.
+  # Their health/info endpoints return JSON, not Prometheus format.
+  # Consider using blackbox_exporter for HTTP health probes if needed.
+
+  # MLflow - Model registry
+  # (Disabled - /health returns JSON, not Prometheus metrics)
+  # - job_name: 'mlflow'
+  #   metrics_path: /health
+  #   static_configs:
+  #     - targets: ['exp-mlflow:5000']
+
+  # Dagster Webserver
+  # (Disabled - /server_info returns JSON, not Prometheus metrics)
+  # - job_name: 'dagster'
+  #   metrics_path: /server_info
+  #   static_configs:
+  #     - targets: ['exp-dagster-webserver:3000']
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DATA LAKE SERVICES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # LakeFS - Data versioning (exposes Prometheus metrics on /metrics)
+  - job_name: 'lakefs'
+    metrics_path: /metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['exp-lakefs:8000']
+        labels:
+          service: 'lakefs'
+          tier: 'data-lake'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'lakefs-server'
+
+  # Trino - Query engine
+  # (Disabled - /v1/info returns JSON, not Prometheus metrics)
+  # Consider using JMX exporter for detailed Trino metrics
+  # - job_name: 'trino'
+  #   metrics_path: /v1/info
+  #   static_configs:
+  #     - targets: ['exp-trino:8080']
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INFRASTRUCTURE METRICS (Optional - uncomment if exporters deployed)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  # Node Exporter - Host system metrics
+  # - job_name: 'node'
+  #   scrape_interval: 15s
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+  #       labels:
+  #         tier: 'infrastructure'
+
+  # cAdvisor - Container metrics
+  # - job_name: 'cadvisor'
+  #   scrape_interval: 15s
+  #   static_configs:
+  #     - targets: ['cadvisor:8080']
+  #       labels:
+  #         tier: 'infrastructure'
+
+  # MinIO - Object storage metrics
+  # - job_name: 'minio'
+  #   metrics_path: /minio/v2/metrics/cluster
+  #   scheme: http
+  #   static_configs:
+  #     - targets: ['exp-minio:9000']
+  #       labels:
+  #         service: 'minio'
+  #         tier: 'storage'

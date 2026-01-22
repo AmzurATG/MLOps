@@ -1,0 +1,77 @@
+# Traefik Dynamic Routes Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+# This file defines additional routes and middlewares.
+# Routes for Docker services are defined via labels in docker-compose.proxy.yml
+# This file is for any static/external services or shared middlewares.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+http:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Shared Middlewares
+  # ─────────────────────────────────────────────────────────────────────────────
+  middlewares:
+    # Rate limiting for API endpoints
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1s
+
+    # Security headers
+    security-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        frameDeny: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        customFrameOptionsValue: "SAMEORIGIN"
+
+    # CORS for API endpoints
+    cors:
+      headers:
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Requested-With
+        accessControlAllowOriginList:
+          - "*"
+        accessControlMaxAge: 100
+        addVaryHeader: true
+
+    # Compression
+    compress:
+      compress: {}
+
+    # Retry on failure
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Routers (for any non-Docker services)
+  # ─────────────────────────────────────────────────────────────────────────────
+  routers:
+    # Health check endpoint
+    health:
+      rule: "Path(`/health`)"
+      entryPoints:
+        - web
+      service: ping@internal
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Services (for any external services)
+  # ─────────────────────────────────────────────────────────────────────────────
+  # services:
+  #   external-api:
+  #     loadBalancer:
+  #       servers:
+  #         - url: "http://external-api.example.com"

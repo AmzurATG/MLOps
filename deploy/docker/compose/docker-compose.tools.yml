@@ -1,0 +1,132 @@
+# ============================================================================
+# DEVELOPMENT TOOLS
+# Optional tools for development, debugging, and data labeling
+# ============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.core.yml -f docker-compose.tools.yml up -d
+#
+# Requires: docker-compose.core.yml
+#
+# Includes:
+#   - Jupyter (notebooks)
+#   - Label Studio (data labeling)
+#   - Kafka UI (streaming debugging)
+# ============================================================================
+
+volumes:
+  exp-label-studio-pg:
+  exp-label-studio-data:
+  exp-jupyter-libs:
+
+services:
+  # ==========================================================================
+  # JUPYTER NOTEBOOK
+  # ==========================================================================
+  exp-jupyter:
+    image: jupyter/pyspark-notebook:python-3.11
+    container_name: exp-jupyter
+    user: root
+    command: start-notebook.sh --NotebookApp.token='${JUPYTER_TOKEN:-jupyter}'
+    ports:
+      - "18888:8888"
+    environment:
+      LAKEFS_SERVER: http://exp-lakefs:8000
+      LAKEFS_ENDPOINT: http://exp-lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+      AWS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+      AWS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+      AWS_REGION: us-east-1
+      S3_ENDPOINT: http://exp-lakefs:8000
+      MINIO_ENDPOINT: http://exp-minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+      NESSIE_URL: http://exp-nessie:19120
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      TRINO_USER: trino
+      TRINO_CATALOG: iceberg_dev
+      WAREHOUSE_URI: s3://warehouse/
+      GRANT_SUDO: "yes"
+      JUPYTER_ENABLE_LAB: "yes"
+      CHOWN_HOME: 'yes'
+      CHOWN_HOME_OPTS: '-R'
+      NB_UID: 1000
+      NB_GID: 100
+    volumes:
+      - ../../../notebooks:/home/jovyan/work
+      - ../../../reports:/home/jovyan/reports
+      - exp-jupyter-libs:/home/jovyan/.local
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # LABEL STUDIO (Data Labeling)
+  # ==========================================================================
+  exp-postgres-labelstudio:
+    image: postgres:16-alpine
+    container_name: exp-postgres-labelstudio
+    environment:
+      POSTGRES_USER: label_studio
+      POSTGRES_PASSWORD: label_studio
+      POSTGRES_DB: label_studio
+    volumes:
+      - exp-label-studio-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "label_studio"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-label-studio:
+    image: heartexlabs/label-studio:1.21.0
+    container_name: exp-label-studio
+    ports:
+      - "18081:8080"
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: 'true'
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/data
+      DJANGO_DB: default
+      POSTGRE_NAME: label_studio
+      POSTGRE_USER: label_studio
+      POSTGRE_PASSWORD: label_studio
+      POSTGRE_HOST: exp-postgres-labelstudio
+      POSTGRE_PORT: 5432
+      LABEL_STUDIO_USERNAME: ${LABELSTUDIO_USERNAME:-admin@example.com}
+      LABEL_STUDIO_PASSWORD: ${LABELSTUDIO_PASSWORD:-admin123}
+    volumes:
+      - exp-label-studio-data:/label-studio/data
+    depends_on:
+      exp-postgres-labelstudio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # KAFKA UI
+  # ==========================================================================
+  exp-kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: exp-kafka-ui
+    ports:
+      - "8086:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: mlops-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: exp-kafka:9092
+      # No zookeeper needed with KRaft mode
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+    networks:
+      - exp-lakehouse
+    restart: "no"

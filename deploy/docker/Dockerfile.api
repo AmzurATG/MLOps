@@ -1,0 +1,56 @@
+FROM python:3.11-slim
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy project files and source code FIRST (needed for editable install)
+COPY pyproject.toml /app/
+COPY src/ /app/src/
+COPY feast_repo /app/feast_repo
+
+# Install dependencies with Feast + Gunicorn
+RUN pip install --no-cache-dir --timeout=300 -e ".[feast]" && \
+    pip install --no-cache-dir gunicorn
+
+# Set environment - ensure src is in PYTHONPATH
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Production Configuration (Configurable at runtime)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Workers: Number of worker processes (recommended: 2*CPU+1)
+ENV WORKERS=4
+# Timeout: Request timeout in seconds
+ENV TIMEOUT=30
+# Keep-alive: Seconds to wait for requests on a connection
+ENV KEEP_ALIVE=5
+# Port: API port
+ENV PORT=8001
+# Host: Bind address
+ENV HOST=0.0.0.0
+# Log level: debug, info, warning, error, critical
+ENV LOG_LEVEL=info
+
+# Expose port
+EXPOSE 8001
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Run API with Gunicorn + Uvicorn workers
+# ═══════════════════════════════════════════════════════════════════════════════
+CMD gunicorn src.mlops.api.main:app \
+    --workers ${WORKERS} \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind ${HOST}:${PORT} \
+    --timeout ${TIMEOUT} \
+    --keep-alive ${KEEP_ALIVE} \
+    --log-level ${LOG_LEVEL} \
+    --access-logfile - \
+    --error-logfile -

@@ -1,0 +1,1253 @@
+# ════════════════════════════════════════════════════════════════════════════
+# UNIFIED MLOps/CVOps PLATFORM - FULL STACK
+# ════════════════════════════════════════════════════════════════════════════
+#
+# This file contains ALL services (43+) for the complete platform.
+# For selective deployment, use the layered compose files:
+#
+# LAYERED DEPLOYMENT OPTIONS:
+#   # Core platform only (required by all use cases)
+#   docker compose -f docker-compose.core.yml up -d
+#
+#   # Core + Fraud Detection
+#   docker compose -f docker-compose.core.yml -f docker-compose.fraud.yml up -d
+#
+#   # Core + Computer Vision
+#   docker compose -f docker-compose.core.yml -f docker-compose.cv.yml up -d
+#
+#   # Core + Fraud + Monitoring
+#   docker compose -f docker-compose.core.yml -f docker-compose.fraud.yml \
+#                  -f docker-compose.monitoring.yml up -d
+#
+#   # Core + Fraud + CV + Monitoring + Tools (full stack)
+#   docker compose -f docker-compose.core.yml -f docker-compose.fraud.yml \
+#                  -f docker-compose.cv.yml -f docker-compose.monitoring.yml \
+#                  -f docker-compose.tools.yml up -d
+#
+# FULL STACK (this file - default):
+#   docker compose up -d
+#
+# ════════════════════════════════════════════════════════════════════════════
+# Includes: MLOps (Fraud Detection) + CVOps (Object Detection)
+# ════════════════════════════════════════════════════════════════════════════
+
+x-common-env: &common-env
+  LAKEFS_SERVER: http://exp-lakefs:8000
+  LAKEFS_ENDPOINT: http://exp-lakefs:8000
+  LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+  LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+  AWS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+  AWS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+  AWS_REGION: us-east-1
+  S3_ENDPOINT: http://exp-lakefs:8000
+  MINIO_ENDPOINT: http://exp-minio:9000
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+  NESSIE_URL: http://exp-nessie:19120
+  TRINO_HOST: exp-trino
+  TRINO_PORT: 8080
+  TRINO_USER: trino
+  TRINO_CATALOG: iceberg_dev
+  MYSQL_HOST: exp-mysql
+  MYSQL_PORT: 3306
+  MYSQL_USER: root
+  MYSQL_PASSWORD: rootpassword
+  WAREHOUSE_URI: s3://warehouse/
+  NESSIE_EXPERIMENT_BRANCH: ${NESSIE_EXPERIMENT_BRANCH:-experiment-v1}
+
+x-dagster-common: &dagster-common
+  build:
+    context: ../../..
+    dockerfile: deploy/docker/Dockerfile.dagster
+  environment: &dagster-env
+    <<: *common-env
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+    MLFLOW_S3_ENDPOINT_URL: http://exp-minio:9000
+    DAGSTER_HOME: /opt/dagster/dagster_home
+    DAGSTER_POSTGRES_HOST: exp-postgres-dagster
+    DAGSTER_POSTGRES_USER: dagster
+    DAGSTER_POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD:-dagster}
+    DAGSTER_POSTGRES_DB: dagster
+    LABELSTUDIO_URL: http://exp-label-studio:8080
+    LABELSTUDIO_API_TOKEN: ${LABELSTUDIO_API_TOKEN:-}
+    LABELSTUDIO_USERNAME: ${LABELSTUDIO_USERNAME:-admin@example.com}
+    LABELSTUDIO_PASSWORD: ${LABELSTUDIO_PASSWORD:-admin123}
+    LABELSTUDIO_PROJECT_NAME: ${LABELSTUDIO_PROJECT_NAME:-MLOps Data Review}
+    LABELSTUDIO_PROJECT_ID: ${LABELSTUDIO_PROJECT_ID:-1}
+    LABELSTUDIO_EXPORT_BATCH_SIZE: ${LABELSTUDIO_EXPORT_BATCH_SIZE:-100}
+    LABELSTUDIO_MAX_IN_REVIEW: ${LABELSTUDIO_MAX_IN_REVIEW:-1000}
+    LABELSTUDIO_MERGE_BATCH_SIZE: ${LABELSTUDIO_MERGE_BATCH_SIZE:-100}
+    SENSOR_EXPORT_INTERVAL_SECONDS: ${SENSOR_EXPORT_INTERVAL_SECONDS:-300}
+    SENSOR_MERGE_INTERVAL_SECONDS: ${SENSOR_MERGE_INTERVAL_SECONDS:-300}
+    AIRBYTE_SERVER_URL: ${AIRBYTE_SERVER_URL:-http://host.docker.internal:18001}
+    AIRBYTE_CLIENT_ID: ${AIRBYTE_CLIENT_ID:-}
+    AIRBYTE_CLIENT_SECRET: ${AIRBYTE_CLIENT_SECRET:-}
+    AIRBYTE_WORKSPACE_ID: ${AIRBYTE_WORKSPACE_ID:-}
+    AIRBYTE_CONNECTION_ID: ${AIRBYTE_CONNECTION_ID:-}
+    FEAST_REPO_PATH: /app/feast_repo
+    FEAST_REGISTRY_URI: postgresql://dagster:dagster@exp-postgres-dagster:5432/feast_registry
+    REDIS_HOST: exp-redis
+    REDIS_PORT: 6379
+    MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+    MLFLOW_EXPERIMENT: fraud-detection
+    MLFLOW_MODEL_NAME: fraud-detector
+    LAKEHOUSE_BRONZE_REPO: ${LAKEHOUSE_BRONZE_REPO:-bronze}
+    LAKEHOUSE_WAREHOUSE_REPO: ${LAKEHOUSE_WAREHOUSE_REPO:-warehouse}
+    LAKEHOUSE_DEV_BRANCH: ${LAKEHOUSE_DEV_BRANCH:-dev}
+    LAKEHOUSE_MAIN_BRANCH: ${LAKEHOUSE_MAIN_BRANCH:-main}
+    # Streaming & Monitoring
+    KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+    FRAUD_API_URL: http://exp-fraud-api:8001
+    PROMETHEUS_PUSHGATEWAY: http://exp-prometheus:9090
+    AB_TEST_ENABLED: "true"
+    AB_CONFIG_PATH: /app/ab_testing/config/experiments.yaml
+    # Sensor Configuration (performance tuning)
+    ICEBERG_SNAPSHOT_POLL_INTERVAL: ${ICEBERG_SNAPSHOT_POLL_INTERVAL:-300}
+    ICEBERG_SNAPSHOT_SENSOR_ENABLED: ${ICEBERG_SNAPSHOT_SENSOR_ENABLED:-true}
+    # CVOps Configuration
+    CVOPS_REPO: ${CVOPS_REPO:-cv-data}
+    CVOPS_BRANCH: ${CVOPS_BRANCH:-dev}
+    CVOPS_WEBHOOK_SECRET: ${CVOPS_WEBHOOK_SECRET:-}
+    YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+    YOLO_DUMMY_MODE: ${YOLO_DUMMY_MODE:-true}
+    CVOPS_MLFLOW_EXPERIMENT: ${CVOPS_MLFLOW_EXPERIMENT:-cvops_object_detection}
+  volumes:
+    # Domain modules (mount to src/ to match import paths)
+    - ../../../src/core:/app/src/core
+    - ../../../src/mlops:/app/src/mlops
+    - ../../../src/cvops:/app/src/cvops
+    - ../../../src/llmops:/app/src/llmops
+    - ../../../src/webhooks:/app/src/webhooks
+    # Legacy paths (for backward compatibility)
+    - ../../../src/pipelines:/app/src/pipelines
+    - ../../../src/api:/app/src/api
+    - ../../../src/streaming:/app/src/streaming
+    # Config and data
+    - ../../../feature_registry:/app/feature_registry
+    - ../../../config:/app/config
+    - ../../../config/services/dagster/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml
+    - exp-dagster-storage:/opt/dagster/dagster_home/storage
+    - exp-dagster-logs:/opt/dagster/dagster_home/logs
+    - ../../../models:/app/models
+    - ../../../config/services/dagster/workspace.yaml:/app/workspace.yaml
+    - ../../../feast_repo:/app/feast_repo
+    - ../../../config/data-quality:/app/data_quality
+    - ../../../ab_testing:/app/ab_testing
+    - ../../../scripts:/app/scripts
+    - ../../../config/monitoring:/app/monitoring
+  networks:
+    - exp-lakehouse
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+
+networks:
+  exp-lakehouse:
+    driver: bridge
+    name: exp-lakehouse
+
+volumes:
+  # Core platform
+  exp-minio-data:
+  exp-lakefs-pg:
+  exp-nessie-pg:
+  exp-dagster-pg:
+  exp-dagster-storage:
+  exp-dagster-logs:
+  exp-label-studio-pg:
+  exp-label-studio-data:
+  exp-jupyter-libs:
+  exp-mysql-data:
+  exp-redis-data:
+  exp-mlflow-data:
+  exp-mlflow-pg:
+  # Streaming
+  exp-kafka-data:
+  # Monitoring
+  exp-prometheus-data:
+  exp-grafana-data:
+  exp-alertmanager-data:
+  # CVOps (NEW)
+  exp-cv-model-cache:
+
+services:
+  # ════════════════════════════════════════════════════════════════════════════
+  # OBJECT STORAGE
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-minio:
+    image: minio/minio:latest
+    container_name: exp-minio
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=PathPrefix(`/minio`)"
+      - "traefik.http.routers.minio.entrypoints=web"
+      - "traefik.http.services.minio.loadbalancer.server.port=9001"
+      - "traefik.http.middlewares.minio-strip.stripprefix.prefixes=/minio"
+      - "traefik.http.routers.minio.middlewares=minio-strip"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - exp-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 20s
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-minio-init:
+    image: minio/mc:latest
+    container_name: exp-minio-init
+    depends_on:
+      exp-minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    entrypoint: >
+      /bin/sh -c "
+      until /usr/bin/mc alias set minio http://exp-minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do sleep 1; done;
+      /usr/bin/mc mb minio/bronze --ignore-existing;
+      /usr/bin/mc mb minio/warehouse --ignore-existing;
+      /usr/bin/mc mb minio/lakefs --ignore-existing;
+      /usr/bin/mc mb minio/models --ignore-existing;
+      /usr/bin/mc mb minio/artifacts --ignore-existing;
+      /usr/bin/mc mb minio/cv-raw --ignore-existing;
+      /usr/bin/mc mb minio/cv-processed --ignore-existing;
+      echo 'MinIO initialized (including CV buckets)';
+      "
+    networks:
+      - exp-lakehouse
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # DATABASES
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-postgres-lakefs:
+    image: postgres:16-alpine
+    container_name: exp-postgres-lakefs
+    environment:
+      POSTGRES_USER: lakefs
+      POSTGRES_PASSWORD: lakefs
+      POSTGRES_DB: lakefs
+    volumes:
+      - exp-lakefs-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "lakefs"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-nessie:
+    image: postgres:16-alpine
+    container_name: exp-postgres-nessie
+    environment:
+      POSTGRES_USER: nessie
+      POSTGRES_PASSWORD: nessie
+      POSTGRES_DB: nessie
+    volumes:
+      - exp-nessie-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "nessie"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-dagster:
+    image: postgres:16-alpine
+    container_name: exp-postgres-dagster
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: ${DAGSTER_POSTGRES_PASSWORD:-dagster}
+      POSTGRES_DB: dagster
+    volumes:
+      - exp-dagster-pg:/var/lib/postgresql/data
+      - ../../../config/database/postgres/init-dagster-postgres.sql:/docker-entrypoint-initdb.d/init-dagster-postgres.sql
+    ports:
+      - "15433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dagster"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-labelstudio:
+    image: postgres:16-alpine
+    container_name: exp-postgres-labelstudio
+    environment:
+      POSTGRES_USER: label_studio
+      POSTGRES_PASSWORD: label_studio
+      POSTGRES_DB: label_studio
+    volumes:
+      - exp-label-studio-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "label_studio"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-mysql:
+    image: mysql:8.0
+    container_name: exp-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: demo
+    volumes:
+      - exp-mysql-data:/var/lib/mysql
+      - ../../../config/database/mysql/init-mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "13307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-postgres-mlflow:
+    image: postgres:16-alpine
+    container_name: exp-postgres-mlflow
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - exp-mlflow-pg:/var/lib/postgresql/data
+    ports:
+      - "15434:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mlflow"]
+      interval: 10s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # DATA VERSIONING & CATALOG
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-lakefs:
+    image: treeverse/lakefs:latest
+    container_name: exp-lakefs
+    ports:
+      - "18000:8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lakefs.rule=PathPrefix(`/lakefs`)"
+      - "traefik.http.routers.lakefs.entrypoints=web"
+      - "traefik.http.services.lakefs.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.lakefs-strip.stripprefix.prefixes=/lakefs"
+      - "traefik.http.routers.lakefs.middlewares=lakefs-strip"
+    environment:
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: some_random_string_here
+      LAKEFS_DATABASE_TYPE: postgres
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: postgres://lakefs:lakefs@exp-postgres-lakefs:5432/lakefs?sslmode=disable
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: true
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://exp-minio:9000
+      LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION: false
+      LAKEFS_LOGGING_LEVEL: INFO
+      LAKEFS_STATS_ENABLED: false
+      # Enable LakeFS Actions for webhook triggers
+      LAKEFS_ACTIONS_ENABLED: "true"
+      LAKEFS_INSTALLATION_USER_NAME: admin
+      LAKEFS_INSTALLATION_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+    depends_on:
+      exp-postgres-lakefs:
+        condition: service_healthy
+      exp-minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-nessie:
+    image: projectnessie/nessie:latest
+    container_name: exp-nessie
+    ports:
+      - "29120:19120"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nessie.rule=PathPrefix(`/nessie`)"
+      - "traefik.http.routers.nessie.entrypoints=web"
+      - "traefik.http.services.nessie.loadbalancer.server.port=19120"
+      - "traefik.http.middlewares.nessie-strip.stripprefix.prefixes=/nessie"
+      - "traefik.http.routers.nessie.middlewares=nessie-strip"
+    environment:
+      QUARKUS_HTTP_PORT: 19120
+      QUARKUS_PROFILE: prod
+      NESSIE_VERSION_STORE_TYPE: JDBC
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://exp-postgres-nessie:5432/nessie
+      QUARKUS_DATASOURCE_USERNAME: nessie
+      QUARKUS_DATASOURCE_PASSWORD: nessie
+    depends_on:
+      exp-postgres-nessie:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-trino:
+    image: trinodb/trino:475
+    container_name: exp-trino
+    ports:
+      - "18083:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trino.rule=PathPrefix(`/trino`)"
+      - "traefik.http.routers.trino.entrypoints=web"
+      - "traefik.http.services.trino.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.trino-strip.stripprefix.prefixes=/trino"
+      - "traefik.http.routers.trino.middlewares=trino-strip"
+    volumes:
+      - ../../../config/services/trino:/etc/trino:ro
+    environment:
+      <<: *common-env
+    depends_on:
+      exp-nessie:
+        condition: service_healthy
+      exp-lakefs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # DAGSTER ORCHESTRATION
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-dagster-webserver:
+    <<: *dagster-common
+    container_name: exp-dagster-webserver
+    command: dagster-webserver -h 0.0.0.0 -p 3000 -w /app/workspace.yaml
+    ports:
+      - "13000:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dagster.rule=PathPrefix(`/dagster`)"
+      - "traefik.http.routers.dagster.entrypoints=web"
+      - "traefik.http.services.dagster.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.dagster-strip.stripprefix.prefixes=/dagster"
+      - "traefik.http.routers.dagster.middlewares=dagster-strip"
+    depends_on:
+      exp-postgres-dagster:
+        condition: service_healthy
+      exp-dagster-daemon:
+        condition: service_started
+    restart: "no"
+
+  exp-dagster-daemon:
+    <<: *dagster-common
+    container_name: exp-dagster-daemon
+    command: dagster-daemon run -w /app/workspace.yaml
+    depends_on:
+      exp-postgres-dagster:
+        condition: service_healthy
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # FEATURE STORE
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-redis:
+    image: redis:7-alpine
+    container_name: exp-redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - exp-redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # FRAUD DETECTION API (MLOps)
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-fraud-api:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.api
+    container_name: exp-fraud-api
+    ports:
+      - "18002:8001"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fraud-api.rule=PathPrefix(`/api/fraud`)"
+      - "traefik.http.routers.fraud-api.entrypoints=web"
+      - "traefik.http.routers.fraud-api.priority=100"
+      - "traefik.http.services.fraud-api.loadbalancer.server.port=8001"
+      - "traefik.http.middlewares.fraud-strip.stripprefix.prefixes=/api/fraud"
+      - "traefik.http.middlewares.fraud-ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.fraud-ratelimit.ratelimit.burst=50"
+      - "traefik.http.middlewares.fraud-ratelimit.ratelimit.period=1s"
+      - "traefik.http.routers.fraud-api.middlewares=fraud-ratelimit,fraud-strip"
+    environment:
+      FEAST_REPO_PATH: /app/feast_repo
+      FEAST_REGISTRY_URI: postgresql://dagster:dagster@exp-postgres-dagster:5432/feast_registry
+      MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://exp-minio:9000
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password123
+      REDIS_HOST: exp-redis
+      REDIS_PORT: 6379
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      PROMETHEUS_METRICS: "true"
+      AB_TEST_ENABLED: "true"
+      AB_CONFIG_PATH: /app/ab_testing/config/experiments.yaml
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      # Gunicorn worker configuration (configurable at runtime)
+      WORKERS: ${API_WORKERS:-4}
+      TIMEOUT: ${API_TIMEOUT:-30}
+      KEEP_ALIVE: ${API_KEEP_ALIVE:-5}
+      LOG_LEVEL: ${API_LOG_LEVEL:-info}
+    volumes:
+      - ../../../feast_repo:/app/feast_repo
+      - ../../../src/api:/app/api
+      - ../../../src/pipelines:/app/pipelines
+      - ../../../ab_testing:/app/ab_testing
+    depends_on:
+      - exp-redis
+      - exp-mlflow
+      - exp-trino
+    networks:
+      - exp-lakehouse
+    restart: "no"
+    # Uses Dockerfile CMD (gunicorn with WORKERS env var)
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # CVOPS SERVICES (Computer Vision)
+  # ════════════════════════════════════════════════════════════════════════════
+  
+  # NOTE: CVOps webhook is now handled by the unified lakefs-webhook service
+  # See lakefs-webhook service below for combined MLOps + CVOps webhook handling
+
+  # CV Detection API - object detection inference service
+  exp-cv-api:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.cv
+    container_name: exp-cv-api
+    ports:
+      - "8002:8002"
+    environment:
+      # MLflow
+      MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+      CV_MODEL_NAME: yolo-object-detector
+      # Kafka for write-back
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      CV_WRITE_BACK: "true"
+      # Trino
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      # YOLO configuration
+      YOLO_DEVICE: ${YOLO_DEVICE:-cpu}
+      YOLO_CONFIDENCE: ${YOLO_CONFIDENCE:-0.25}
+      YOLO_MODEL_PATH: ${YOLO_MODEL_PATH:-yolov8n.pt}
+    volumes:
+      - ../../../src/api:/app/api:ro
+      - ../../../src/pipelines:/app/pipelines:ro
+      - exp-cv-model-cache:/root/.cache/ultralytics
+    # GPU support - uncomment for NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    depends_on:
+      - exp-mlflow
+      - exp-kafka
+      - exp-trino
+    networks:
+      - exp-lakehouse
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SUPPORTING TOOLS
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-label-studio:
+    image: heartexlabs/label-studio:1.21.0
+    container_name: exp-label-studio
+    ports:
+      - "18081:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.labelstudio.rule=PathPrefix(`/labelstudio`)"
+      - "traefik.http.routers.labelstudio.entrypoints=web"
+      - "traefik.http.services.labelstudio.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.labelstudio-strip.stripprefix.prefixes=/labelstudio"
+      - "traefik.http.routers.labelstudio.middlewares=labelstudio-strip"
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: 'true'
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/data
+      DJANGO_DB: default
+      POSTGRE_NAME: label_studio
+      POSTGRE_USER: label_studio
+      POSTGRE_PASSWORD: label_studio
+      POSTGRE_HOST: exp-postgres-labelstudio
+      POSTGRE_PORT: 5432
+      LABEL_STUDIO_USERNAME: ${LABELSTUDIO_USERNAME:-admin@example.com}
+      LABEL_STUDIO_PASSWORD: ${LABELSTUDIO_PASSWORD:-admin123}
+    volumes:
+      - exp-label-studio-data:/label-studio/data
+    depends_on:
+      exp-postgres-labelstudio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-jupyter:
+    image: jupyter/pyspark-notebook:python-3.11
+    container_name: exp-jupyter
+    user: root
+    command: start-notebook.sh --NotebookApp.token='${JUPYTER_TOKEN:-jupyter}'
+    ports:
+      - "18888:8888"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jupyter.rule=PathPrefix(`/jupyter`)"
+      - "traefik.http.routers.jupyter.entrypoints=web"
+      - "traefik.http.services.jupyter.loadbalancer.server.port=8888"
+      - "traefik.http.middlewares.jupyter-strip.stripprefix.prefixes=/jupyter"
+      - "traefik.http.routers.jupyter.middlewares=jupyter-strip"
+    environment:
+      <<: *common-env
+      GRANT_SUDO: "yes"
+      JUPYTER_ENABLE_LAB: "yes"
+      CHOWN_HOME: 'yes'
+      CHOWN_HOME_OPTS: '-R'
+      NB_UID: 1000
+      NB_GID: 100
+    volumes:
+      - ../../../notebooks:/home/jovyan/work
+      - ../../../reports:/home/jovyan/reports
+      - exp-jupyter-libs:/home/jovyan/.local
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # exp-nifi:
+  #   image: apache/nifi:1.27.0
+  #   container_name: exp-nifi
+  #   ports:
+  #     - "18090:8080"
+  #   environment:
+  #     NIFI_WEB_HTTP_PORT: 8080
+  #     NIFI_WEB_HTTP_HOST: 0.0.0.0
+  #     LAKEFS_ENDPOINT: http://exp-lakefs:8000
+  #     LAKEFS_ACCESS_KEY: ${LAKEFS_ACCESS_KEY_ID:-AKIAIOSFODNN7EXAMPLE}
+  #     LAKEFS_SECRET_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY}
+  #   volumes:
+  #     - ../../../data/cv_raw:/data/cv_raw
+  #     - ../../../data/llm_raw:/data/llm_raw
+  #   networks:
+  #     - exp-lakehouse
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #   restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # MLFLOW
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-mlflow:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.mlflow
+    container_name: exp-mlflow
+    ports:
+      - "15000:5000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow.rule=PathPrefix(`/mlflow`)"
+      - "traefik.http.routers.mlflow.entrypoints=web"
+      - "traefik.http.services.mlflow.loadbalancer.server.port=5000"
+      - "traefik.http.middlewares.mlflow-strip.stripprefix.prefixes=/mlflow"
+      - "traefik.http.routers.mlflow.middlewares=mlflow-strip"
+    environment:
+      MLFLOW_TRACKING_URI: http://exp-mlflow:5000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      MLFLOW_S3_ENDPOINT_URL: http://exp-minio:9000
+      MLFLOW_SERVER_ALLOWED_HOSTS: "localhost:5000,127.0.0.1:5000,exp-mlflow:5000,exp-mlflow,localhost:15000,127.0.0.1:15000"
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: http://localhost:15000,http://exp-litellm:4000,http://localhost:4000
+      MLFLOW_TRACKING_INSECURE_TLS: "true"
+      GUNICORN_CMD_ARGS: "--bind=0.0.0.0:5000 --timeout=120 --forwarded-allow-ips='*' --access-logfile=-"
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri postgresql://mlflow:mlflow@exp-postgres-mlflow:5432/mlflow
+        --default-artifact-root s3://models/mlflow
+        --serve-artifacts
+    volumes:
+      - exp-mlflow-data:/mlflow
+    depends_on:
+      exp-minio:
+        condition: service_healthy
+      exp-postgres-mlflow:
+        condition: service_healthy
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # STREAMING LAYER (Kafka with KRaft + Debezium CDC)
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-kafka:
+    image: apache/kafka:4.0.0
+    container_name: exp-kafka
+    user: root
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      # KRaft mode configuration (Kafka 4.0 is KRaft-only, no Zookeeper support)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@exp-kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Listeners
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://exp-kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Cluster ID (generated with: kafka-storage random-uuid)
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      # Topic settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Log dirs (Apache Kafka 4.0 uses /tmp/kraft-combined-logs by default)
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    volumes:
+      - exp-kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: exp-kafka-ui
+    ports:
+      - "8086:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: mlops-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: exp-kafka:9092
+      # Schema Registry integration
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://exp-schema-registry:8081
+      # No zookeeper needed with KRaft mode
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-schema-registry:
+        condition: service_healthy
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SCHEMA REGISTRY - Centralized Schema Management for Kafka
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    container_name: exp-schema-registry
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: exp-schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: exp-kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      # Schema compatibility mode: BACKWARD (default), FORWARD, FULL, NONE
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: BACKWARD
+      # Allow subjects to be deleted (useful for development)
+      SCHEMA_REGISTRY_DELETE_SUBJECT_MODE: soft
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # KSQLDB - Streaming SQL for Real-Time Feature Computation
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-ksqldb-server:
+    image: confluentinc/ksqldb-server:0.29.0
+    container_name: exp-ksqldb-server
+    ports:
+      - "8088:8088"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ksqldb.rule=PathPrefix(`/ksqldb`)"
+      - "traefik.http.routers.ksqldb.entrypoints=web"
+      - "traefik.http.services.ksqldb.loadbalancer.server.port=8088"
+      - "traefik.http.middlewares.ksqldb-strip.stripprefix.prefixes=/ksqldb"
+      - "traefik.http.routers.ksqldb.middlewares=ksqldb-strip"
+    environment:
+      KSQL_BOOTSTRAP_SERVERS: exp-kafka:9092
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_KSQL_SERVICE_ID: fraud_ksqldb_
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: "http://exp-schema-registry:8081"
+      KSQL_KSQL_STREAMS_AUTO_OFFSET_RESET: earliest
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-schema-registry:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-ksqldb-cli:
+    image: confluentinc/ksqldb-cli:0.29.0
+    container_name: exp-ksqldb-cli
+    depends_on:
+      exp-ksqldb-server:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    tty: true
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-ksqldb-init:
+    image: confluentinc/ksqldb-cli:0.29.0
+    container_name: exp-ksqldb-init
+    volumes:
+      - ../../../config/streaming/ksqldb:/ksqldb-src:ro
+    depends_on:
+      exp-ksqldb-server:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo 'Copying ksqlDB scripts with proper permissions...'
+        mkdir -p /tmp/ksqldb
+        cp /ksqldb-src/*.sql /tmp/ksqldb/
+        cp /ksqldb-src/*.sh /tmp/ksqldb/
+        chmod 644 /tmp/ksqldb/*.sql
+        chmod 755 /tmp/ksqldb/*.sh
+        echo 'Running ksqlDB init script...'
+        /bin/bash /tmp/ksqldb/init_ksqldb.sh
+    environment:
+      KSQL_SERVER: http://exp-ksqldb-server:8088
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # Standalone event-driven Kafka consumer for fraud streaming features
+  exp-streaming-redis-consumer:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.streaming-consumer
+    container_name: exp-streaming-redis-consumer
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      STREAMING_FEATURES_TOPIC: fraud.streaming.features
+      KAFKA_CONSUMER_GROUP: fraud-streaming-consumer
+      REDIS_HOST: exp-redis
+      REDIS_PORT: 6379
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-redis:
+        condition: service_started
+      exp-ksqldb-init:
+        condition: service_completed_successfully
+    networks:
+      - exp-lakehouse
+    restart: unless-stopped
+
+  exp-debezium:
+    image: quay.io/debezium/connect:3.0
+    container_name: exp-debezium
+    ports:
+      - "8085:8083"
+    environment:
+      BOOTSTRAP_SERVERS: exp-kafka:9092
+      GROUP_ID: debezium-cluster
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      STATUS_STORAGE_TOPIC: debezium_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # MONITORING LAYER (Prometheus + Grafana + AlertManager)
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: exp-prometheus
+    ports:
+      - "9090:9090"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.entrypoints=web"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
+      - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
+    volumes:
+      - ../../../config/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ../../../config/monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - exp-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-grafana:
+    image: grafana/grafana:11.3.0
+    container_name: exp-grafana
+    ports:
+      - "3002:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost/grafana
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - ../../../config/monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ../../../config/monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - exp-grafana-data:/var/lib/grafana
+    depends_on:
+      - exp-prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  exp-alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: exp-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../../../config/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - exp-alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # INIT SERVICES (Auto-setup)
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-debezium-init:
+    image: curlimages/curl:latest
+    container_name: exp-debezium-init
+    networks:
+      - exp-lakehouse
+    depends_on:
+      exp-debezium:
+        condition: service_started
+      exp-mysql:
+        condition: service_healthy
+    command: >
+      sh -c "
+      echo 'Waiting for Debezium Connect to be ready...';
+      until curl -sf http://exp-debezium:8083/connectors; do
+        echo '  Debezium not ready, retrying in 10s...';
+        sleep 10;
+      done;
+      echo 'Debezium Connect is ready!';
+      sleep 5;
+      echo 'Registering MySQL fraud connector...';
+      curl -X DELETE http://exp-debezium:8083/connectors/mysql-fraud-connector 2>/dev/null || true;
+      sleep 2;
+      for i in 1 2 3 4 5; do
+        if curl -sf -X POST http://exp-debezium:8083/connectors \
+          -H 'Content-Type: application/json' \
+          -d @/config/mysql-connector.json; then
+          echo 'MySQL fraud connector registered successfully!';
+          break;
+        else
+          echo \"  Attempt $$i failed, retrying in 10s...\";
+          sleep 10;
+        fi;
+      done;
+      echo 'Registering evaluation connector...';
+      curl -X DELETE http://exp-debezium:8083/connectors/mysql-evaluation-connector 2>/dev/null || true;
+      sleep 2;
+      curl -sf -X POST http://exp-debezium:8083/connectors \
+        -H 'Content-Type: application/json' \
+        -d @/config/evaluation-connector.json 2>/dev/null || echo 'Evaluation connector skipped (optional)';
+      echo 'Debezium initialization complete!';
+      "
+    volumes:
+      - ../../../config/streaming/debezium:/config
+    restart: "no"
+
+
+  # Unified LakeFS Webhook Server (handles both MLOps and CVOps)
+  lakefs-webhook:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.webhook
+    container_name: unified-webhook
+    ports:
+      - "5000:5000"
+    environment:
+      # Trino connection
+      TRINO_HOST: exp-trino
+      TRINO_PORT: 8080
+      TRINO_USER: trino
+      TRINO_CATALOG: ${TRINO_CATALOG:-iceberg_dev}
+      # LakeFS connection (for auto-restore of webhook config after revert)
+      LAKEFS_ENDPOINT: http://exp-lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-your-lakefs-access-key}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-your-lakefs-secret-key}
+      # Dagster connection (for triggering rollback jobs)
+      DAGSTER_GRAPHQL_URL: http://exp-dagster-webserver:3000/graphql
+      # MLOps config
+      LAKEFS_WEBHOOK_SECRET: ${LAKEFS_WEBHOOK_SECRET:-}
+      MLOPS_REPOS: warehouse,bronze
+      # CVOps config
+      CVOPS_REPO: ${CVOPS_REPO:-cv-data}
+      CVOPS_BRANCH: ${CVOPS_BRANCH:-dev}
+      CVOPS_WEBHOOK_SECRET: ${CVOPS_WEBHOOK_SECRET:-}
+      # Security
+      VERIFY_WEBHOOK_SIGNATURE: ${VERIFY_WEBHOOK_SIGNATURE:-false}
+    networks:
+      - exp-lakehouse
+    depends_on:
+      exp-trino:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+
+  # =============================================================================
+  # CVOPS KAFKA INGESTION
+  # =============================================================================
+
+  # CVOps Kafka Topic Initialization
+  exp-kafka-cvops-init:
+    image: apache/kafka:4.0.0
+    container_name: exp-kafka-cvops-init
+    networks:
+      - exp-lakehouse
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+    entrypoint: >
+      /bin/bash -c "
+      echo 'Creating CVOps Kafka topics...';
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --create --if-not-exists --topic cv.images.ingest --partitions 6 --replication-factor 1 --config retention.ms=604800000;
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --create --if-not-exists --topic cv.images.dlq --partitions 3 --replication-factor 1 --config retention.ms=2592000000;
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --create --if-not-exists --topic cv.images.validated --partitions 6 --replication-factor 1 --config retention.ms=259200000;
+      echo 'Listing all cv.* topics:';
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server exp-kafka:9092 --list | grep '^cv\.';
+      echo 'CVOps Kafka topics created successfully!';
+      "
+    restart: "no"
+
+  # CVOps Streaming Ingestion Consumer
+  exp-cvops-ingest-consumer:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile.cv-consumer
+    container_name: exp-cvops-ingest-consumer
+    networks:
+      - exp-lakehouse
+    environment:
+      # Kafka Configuration
+      KAFKA_BOOTSTRAP_SERVERS: exp-kafka:9092
+      CVOPS_KAFKA_INGEST_TOPIC: cv.images.ingest
+      CVOPS_KAFKA_DLQ_TOPIC: cv.images.dlq
+      CVOPS_KAFKA_VALIDATED_TOPIC: cv.images.validated
+      CVOPS_KAFKA_CONSUMER_GROUP: cvops-ingest-consumer
+      CVOPS_KAFKA_BATCH_SIZE: "100"
+      CVOPS_KAFKA_COMMIT_INTERVAL: "5"
+      # LakeFS Configuration
+      LAKEFS_SERVER: http://exp-lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID:-AKIAIOSFOLKFSSAMPLES}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY:-wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY}
+      CVOPS_REPO: ${CVOPS_REPO:-cv-data}
+      CVOPS_BRANCH: ${CVOPS_BRANCH:-dev-cvops}
+      CVOPS_RAW_PREFIX: raw/images/
+      CVOPS_COPY_TO_LAKEFS: "true"
+      # Trino/Iceberg Configuration
+      TRINO_HOST: exp-trino
+      TRINO_PORT: "8080"
+      TRINO_USER: trino
+      TRINO_CATALOG: iceberg_dev
+      CVOPS_IMAGE_METADATA_TABLE: iceberg_dev.cv.image_metadata
+      # MinIO Configuration
+      MINIO_ENDPOINT: http://exp-minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+      exp-kafka-cvops-init:
+        condition: service_completed_successfully
+      exp-trino:
+        condition: service_healthy
+      exp-lakefs:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.settimeout(2); s.connect(('exp-kafka', 9092)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    profiles:
+      - cvops-streaming
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # REVERSE PROXY (Traefik)
+  # ════════════════════════════════════════════════════════════════════════════
+  exp-traefik:
+    image: traefik:v2.11
+    container_name: exp-traefik
+    restart: unless-stopped
+    environment:
+      - DOCKER_API_VERSION=1.44
+    ports:
+      - "80:80"       # HTTP entrypoint
+      - "443:443"     # HTTPS entrypoint
+      - "8080:8080"   # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../../config/services/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ../../../config/services/traefik/dynamic:/etc/traefik/dynamic:ro
+    networks:
+      - exp-lakehouse
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.traefik-api.rule=PathPrefix(`/api`) && !PathPrefix(`/api/fraud`)"
+      - "traefik.http.routers.traefik-api.service=api@internal"
+      - "traefik.http.routers.traefik-api.priority=1"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

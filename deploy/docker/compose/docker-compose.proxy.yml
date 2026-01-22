@@ -1,0 +1,183 @@
+# Traefik Reverse Proxy Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+#
+# Access:
+#   Dashboard: http://localhost:8080
+#   Services:  http://localhost/<path>
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Traefik Reverse Proxy
+  # ─────────────────────────────────────────────────────────────────────────────
+  exp-traefik:
+    image: traefik:v2.11
+    container_name: exp-traefik
+    restart: unless-stopped
+    environment:
+      - DOCKER_API_VERSION=1.44
+    ports:
+      - "80:80"       # HTTP entrypoint
+      - "443:443"     # HTTPS entrypoint
+      - "8080:8080"   # Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../../config/services/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ../../../config/services/traefik/dynamic:/etc/traefik/dynamic:ro
+    networks:
+      - exp-lakehouse
+    labels:
+      - "traefik.enable=true"
+      # Dashboard route - only /dashboard, /api handled separately
+      - "traefik.http.routers.dashboard.rule=PathPrefix(`/dashboard`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      # Traefik API route with low priority (for /api/overview, etc)
+      - "traefik.http.routers.traefik-api.rule=PathPrefix(`/api`) && !PathPrefix(`/api/fraud`)"
+      - "traefik.http.routers.traefik-api.service=api@internal"
+      - "traefik.http.routers.traefik-api.priority=1"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Service Labels Override
+  # These extend the existing services with Traefik routing labels
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  # Fraud Detection API
+  exp-fraud-api:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fraud-api.rule=PathPrefix(`/api/fraud`)"
+      - "traefik.http.routers.fraud-api.entrypoints=web"
+      - "traefik.http.routers.fraud-api.priority=100"
+      - "traefik.http.services.fraud-api.loadbalancer.server.port=8001"
+      # Strip prefix so /api/fraud/predict -> /predict
+      - "traefik.http.middlewares.fraud-strip.stripprefix.prefixes=/api/fraud"
+      # Rate limiting: 100 req/sec average, 50 burst
+      - "traefik.http.middlewares.fraud-ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.fraud-ratelimit.ratelimit.burst=50"
+      - "traefik.http.middlewares.fraud-ratelimit.ratelimit.period=1s"
+      # Chain middlewares: rate limit first, then strip prefix
+      - "traefik.http.routers.fraud-api.middlewares=fraud-ratelimit,fraud-strip"
+
+  # MLflow UI
+  exp-mlflow:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mlflow.rule=PathPrefix(`/mlflow`)"
+      - "traefik.http.routers.mlflow.entrypoints=web"
+      - "traefik.http.services.mlflow.loadbalancer.server.port=5000"
+      - "traefik.http.middlewares.mlflow-strip.stripprefix.prefixes=/mlflow"
+      - "traefik.http.routers.mlflow.middlewares=mlflow-strip"
+
+  # Grafana
+  exp-grafana:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+      - "traefik.http.routers.grafana.entrypoints=web"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    environment:
+      - GF_SERVER_ROOT_URL=http://localhost/grafana
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+
+  # Dagster Webserver
+  exp-dagster-webserver:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dagster.rule=PathPrefix(`/dagster`)"
+      - "traefik.http.routers.dagster.entrypoints=web"
+      - "traefik.http.services.dagster.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.dagster-strip.stripprefix.prefixes=/dagster"
+      - "traefik.http.routers.dagster.middlewares=dagster-strip"
+
+  # Label Studio
+  exp-label-studio:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.labelstudio.rule=PathPrefix(`/labelstudio`)"
+      - "traefik.http.routers.labelstudio.entrypoints=web"
+      - "traefik.http.services.labelstudio.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.labelstudio-strip.stripprefix.prefixes=/labelstudio"
+      - "traefik.http.routers.labelstudio.middlewares=labelstudio-strip"
+
+  # Jupyter Notebook
+  exp-jupyter:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jupyter.rule=PathPrefix(`/jupyter`)"
+      - "traefik.http.routers.jupyter.entrypoints=web"
+      - "traefik.http.services.jupyter.loadbalancer.server.port=8888"
+      - "traefik.http.middlewares.jupyter-strip.stripprefix.prefixes=/jupyter"
+      - "traefik.http.routers.jupyter.middlewares=jupyter-strip"
+
+  # MinIO Console
+  exp-minio:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=PathPrefix(`/minio`)"
+      - "traefik.http.routers.minio.entrypoints=web"
+      - "traefik.http.services.minio.loadbalancer.server.port=9001"
+      - "traefik.http.middlewares.minio-strip.stripprefix.prefixes=/minio"
+      - "traefik.http.routers.minio.middlewares=minio-strip"
+
+  # Prometheus
+  exp-prometheus:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+      - "traefik.http.routers.prometheus.entrypoints=web"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
+      - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
+
+  # Trino
+  exp-trino:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trino.rule=PathPrefix(`/trino`)"
+      - "traefik.http.routers.trino.entrypoints=web"
+      - "traefik.http.services.trino.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.trino-strip.stripprefix.prefixes=/trino"
+      - "traefik.http.routers.trino.middlewares=trino-strip"
+
+  # LakeFS
+  exp-lakefs:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lakefs.rule=PathPrefix(`/lakefs`)"
+      - "traefik.http.routers.lakefs.entrypoints=web"
+      - "traefik.http.services.lakefs.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.lakefs-strip.stripprefix.prefixes=/lakefs"
+      - "traefik.http.routers.lakefs.middlewares=lakefs-strip"
+
+  # Nessie (Iceberg Catalog)
+  exp-nessie:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nessie.rule=PathPrefix(`/nessie`)"
+      - "traefik.http.routers.nessie.entrypoints=web"
+      - "traefik.http.services.nessie.loadbalancer.server.port=19120"
+      - "traefik.http.middlewares.nessie-strip.stripprefix.prefixes=/nessie"
+      - "traefik.http.routers.nessie.middlewares=nessie-strip"
+
+  # ksqlDB
+  exp-ksqldb-server:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ksqldb.rule=PathPrefix(`/ksqldb`)"
+      - "traefik.http.routers.ksqldb.entrypoints=web"
+      - "traefik.http.services.ksqldb.loadbalancer.server.port=8088"
+      - "traefik.http.middlewares.ksqldb-strip.stripprefix.prefixes=/ksqldb"
+      - "traefik.http.routers.ksqldb.middlewares=ksqldb-strip"
+
+networks:
+  exp-lakehouse:
+    external: true

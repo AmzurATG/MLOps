@@ -1,0 +1,101 @@
+# Bronze Layer Quality Expectations
+# Raw data validation for fraud transactions
+# ════════════════════════════════════════════════════════════════════════════════
+
+expectation_suite_name: bronze_fraud_transactions
+
+expectations:
+  # Schema validation
+  - expectation_type: expect_table_columns_to_match_set
+    kwargs:
+      column_set:
+        - transaction_id
+        - customer_id
+        - amount
+        - quantity
+        - country
+        - device_type
+        - payment_method
+        - category
+        - timestamp
+        - is_fraudulent
+    meta:
+      severity: critical
+      description: "Schema must contain required columns"
+
+  # Primary key
+  - expectation_type: expect_column_values_to_be_unique
+    kwargs:
+      column: transaction_id
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: transaction_id
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: customer_id
+    meta:
+      severity: critical
+
+  # Amount validation
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: amount
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: amount
+      min_value: 0.01
+      max_value: 1000000
+    meta:
+      severity: warning
+
+  # Categorical validation
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: country
+      value_set: ["US", "UK", "DE", "FR", "CA", "AU", "IN", "BR", "NG", "PK", "RU", "CN", "JP", "MX", "XX"]
+    meta:
+      severity: warning
+
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: payment_method
+      value_set: ["credit_card", "debit_card", "paypal", "crypto", "wallet", "bank_transfer", "unknown"]
+    meta:
+      severity: warning
+
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: device_type
+      value_set: ["desktop", "mobile", "tablet", "pos_terminal", "atm", "unknown"]
+    meta:
+      severity: warning
+
+  # Label validation
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: is_fraudulent
+      value_set: [0, 1]
+    meta:
+      severity: critical
+
+  # Volume validation
+  - expectation_type: expect_table_row_count_to_be_between
+    kwargs:
+      min_value: 100
+      max_value: 10000000
+    meta:
+      severity: warning
+
+meta:
+  layer: bronze
+  domain: fraud_detection
+  owner: data-engineering

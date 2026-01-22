@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    git \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy project files and source code FIRST (needed for editable install)
+COPY pyproject.toml /app/
+COPY src/ /app/src/
+
+# Install Python dependencies with Feast, Monitoring, Notebook, and Streaming
+RUN pip install --no-cache-dir --timeout=300 -e ".[feast,monitoring,notebook,streaming]"
+
+# Create Dagster home directory
+RUN mkdir -p /opt/dagster/dagster_home/storage /opt/dagster/dagster_home/logs
+
+# Copy config after install
+COPY config /app/config
+
+# Set environment
+ENV DAGSTER_HOME=/opt/dagster/dagster_home
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+# Default command (overridden in docker-compose)
+CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]

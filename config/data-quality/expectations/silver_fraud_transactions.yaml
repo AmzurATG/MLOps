@@ -1,0 +1,77 @@
+# Silver Layer Quality Expectations
+# Cleaned and transformed data validation
+# ════════════════════════════════════════════════════════════════════════════════
+
+expectation_suite_name: silver_fraud_transactions
+
+expectations:
+  # Completeness - No nulls in critical fields
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: transaction_id
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: customer_id
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: amount
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: event_timestamp
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: is_fraudulent
+    meta:
+      severity: critical
+
+  # Business rules
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: amount
+      min_value: 0.01
+      max_value: 500000
+      mostly: 0.99
+    meta:
+      severity: warning
+
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: is_fraudulent
+      value_set: [0, 1]
+    meta:
+      severity: critical
+
+  # Deduplication check
+  - expectation_type: expect_column_values_to_be_unique
+    kwargs:
+      column: transaction_id
+    meta:
+      severity: critical
+
+  # Fraud rate validation
+  - expectation_type: expect_column_mean_to_be_between
+    kwargs:
+      column: is_fraudulent
+      min_value: 0.001
+      max_value: 0.20
+    meta:
+      severity: warning
+      description: "Fraud rate should be between 0.1% and 20%"
+
+meta:
+  layer: silver
+  domain: fraud_detection
+  owner: data-engineering
+  upstream: bronze_fraud_transactions

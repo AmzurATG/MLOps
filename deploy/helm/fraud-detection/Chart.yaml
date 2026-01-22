@@ -1,0 +1,29 @@
+apiVersion: v2
+name: fraud-detection
+description: MLOps Fraud Detection Platform - Real-time fraud detection with ML model serving
+
+type: application
+version: 0.1.0
+appVersion: "2.1.0"
+
+keywords:
+  - mlops
+  - fraud-detection
+  - machine-learning
+  - feast
+  - dagster
+
+maintainers:
+  - name: MLOps Team
+    email: mlops@example.com
+
+dependencies:
+  - name: redis
+    version: "18.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+
+  - name: postgresql
+    version: "13.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

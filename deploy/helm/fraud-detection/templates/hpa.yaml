@@ -1,0 +1,33 @@
+{{- if and .Values.fraudApi.enabled .Values.fraudApi.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "fraud-detection.fullname" . }}-api
+  labels:
+    {{- include "fraud-detection.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "fraud-detection.fullname" . }}-api
+  minReplicas: {{ .Values.fraudApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.fraudApi.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.fraudApi.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.fraudApi.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.fraudApi.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.fraudApi.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

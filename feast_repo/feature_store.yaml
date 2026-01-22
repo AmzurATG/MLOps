@@ -1,0 +1,39 @@
+# Feast Feature Store Configuration
+# =============================================================================
+# Uses Feast's native ${VAR} environment variable substitution.
+# Required env vars (set in docker-compose):
+#   TRINO_HOST, TRINO_PORT, TRINO_CATALOG, TRINO_USER
+#   REDIS_HOST, REDIS_PORT
+#
+# To switch catalogs, update TRINO_CATALOG in docker-compose or .env:
+#   iceberg_dev (default - dev branch)
+#   iceberg_experiment_v1 (experiment branch)
+#   iceberg_main (production branch)
+# =============================================================================
+project: fraud_detection
+provider: local
+
+registry:
+  registry_type: sql
+  path: postgresql+psycopg://dagster:dagster@exp-postgres-dagster:5432/feast_registry
+
+online_store:
+  type: redis
+  connection_string: ${REDIS_HOST}:${REDIS_PORT}
+
+offline_store:
+  type: trino
+  host: ${TRINO_HOST}
+  port: ${TRINO_PORT}
+  catalog: ${TRINO_CATALOG}
+  user: ${TRINO_USER}
+  connector:
+    type: memory
+    schema: feast
+  auth:
+    type: basic
+    config:
+      username: ${TRINO_USER}
+      password: ""
+
+entity_key_serialization_version: 3

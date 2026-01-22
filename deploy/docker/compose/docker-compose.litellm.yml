@@ -1,0 +1,148 @@
+# ============================================================================
+# LiteLLM Proxy - Local Development Setup with MLflow Integration
+# ============================================================================
+# Purpose: Run LiteLLM locally for testing without affecting production
+#
+# Usage:
+#   # Start LiteLLM standalone
+#   docker-compose -f docker-compose.litellm.yml up -d
+#
+#   # Or start with existing MLOps stack
+#   docker-compose -f docker-compose.yml -f docker-compose.litellm.yml up -d
+#
+# Access:
+#   LiteLLM Proxy: http://localhost:4000
+#   LiteLLM UI:    http://localhost:4000/ui
+#   MLflow UI:     http://localhost:15000
+# ============================================================================
+
+services:
+  # ==========================================================================
+  # PostgreSQL Database for LiteLLM
+  # ==========================================================================
+  exp-postgres-litellm:
+    image: postgres:16-alpine
+    container_name: exp-postgres-litellm
+    environment:
+      POSTGRES_USER: ${LITELLM_DB_USER:-litellm}
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm123}
+      POSTGRES_DB: ${LITELLM_DB_NAME:-litellm}
+    ports:
+      - "15435:5432"  # Changed from 15433 to avoid conflict with Dagster PostgreSQL
+    volumes:
+      - exp-litellm-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+
+  # ==========================================================================
+  # Redis for LiteLLM Caching (Optional but Recommended)
+  # ==========================================================================
+  exp-redis-litellm:
+    image: redis:7-alpine
+    container_name: exp-redis-litellm
+    command: redis-server --requirepass ${LITELLM_REDIS_PASSWORD:-redis123}
+    ports:
+      - "16380:6379"  # Different port to avoid conflict with main exp-redis
+    volumes:
+      - exp-litellm-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+
+  # ==========================================================================
+  # LiteLLM Proxy Server
+  # ==========================================================================
+  exp-litellm:
+    image: litellm-mlflow:latest  # Custom image with MLflow support (built from docker/Dockerfile.litellm)
+    container_name: exp-litellm
+    ports:
+      - "4000:4000"
+    environment:
+      # Database Configuration
+      DATABASE_URL: postgresql://${LITELLM_DB_USER:-litellm}:${LITELLM_DB_PASSWORD:-litellm123}@exp-postgres-litellm:5432/${LITELLM_DB_NAME:-litellm}
+      
+      # Master Key for Admin Access
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-dev-2025}
+      
+      # Store models in database
+      STORE_MODEL_IN_DB: "True"
+      
+      # OpenAI API Key (add your own)
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+
+      # Groq API Key (FREE TIER)
+      GROQ_API_KEY: ${GROQ_API_KEY}
+
+      # MLflow Integration - Connect to existing MLflow
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://exp-mlflow:5000}
+      MLFLOW_EXPERIMENT_NAME: ${LITELLM_MLFLOW_EXPERIMENT:-litellm-local-dev}
+      MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING: "true"
+      
+      # Redis Cache Configuration (Optional)
+      REDIS_HOST: exp-redis-litellm
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${LITELLM_REDIS_PASSWORD:-redis123}
+      
+      # UI Configuration
+      UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
+      UI_PASSWORD: ${LITELLM_UI_PASSWORD:-admin123}
+      
+      # Logging
+      LITELLM_LOG: INFO
+
+      # Salt key for encrypting API keys in database
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY:-sk-salt-local-dev-2025}
+
+    volumes:
+      # Mount your local config file
+      - ../../../config/services/litellm/litellm_config.yaml:/app/config.yaml:ro
+    
+    command: 
+      - "--config"
+      - "/app/config.yaml"
+      - "--port"
+      - "4000"
+      - "--detailed_debug"
+    
+    depends_on:
+      exp-postgres-litellm:
+        condition: service_healthy
+      exp-redis-litellm:
+        condition: service_healthy
+    
+    networks:
+      - exp-lakehouse
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health/liveliness || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  exp-litellm-postgres-data:
+    name: exp-litellm-postgres-data
+  exp-litellm-redis-data:
+    name: exp-litellm-redis-data
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  exp-lakehouse:
+    external: true
+    # Uses the existing exp-lakehouse network from the main docker-compose.yml
+    # This allows LiteLLM to communicate with MLflow and other services

@@ -1,0 +1,800 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURE REGISTRY - Single Source of Truth
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# This file defines ALL features for a project. Code generators use this to create:
+#   - SQL for batch feature engineering (Trino/Spark)
+#   - Python for real-time inference
+#   - Feast feature view definitions
+#   - Documentation
+#
+# To add a new project, create a new YAML file (e.g., churn_features.yaml)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+project:
+  name: fraud_detection
+  version: "2.0.0"
+  description: "Fraud detection feature set for e-commerce transactions"
+
+  # Source table for training data
+  # NOTE: catalog comes from environment variable TRINO_CATALOG (default: iceberg_dev)
+  # This allows branch-based experimentation without changing YAML
+  source:
+    schema: gold
+    table: fraud_transactions
+    timestamp_field: transaction_date
+
+  # Output table for computed features
+  output:
+    schema: gold
+    table: fraud_training_data
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENTITIES - Join keys for feature lookups
+# ═══════════════════════════════════════════════════════════════════════════════
+
+entities:
+  customer:
+    join_key: customer_id
+    type: string
+    description: "Unique customer identifier"
+    
+  transaction:
+    join_key: transaction_id
+    type: string
+    description: "Unique transaction identifier"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURES - Organized by category
+# ═══════════════════════════════════════════════════════════════════════════════
+
+features:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PRIMITIVES - Direct columns from source, no transformation
+  # ─────────────────────────────────────────────────────────────────────────────
+  primitives:
+    entity: [customer, transaction]
+    ttl_days: 90
+    online: true
+    columns:
+      - name: amount
+        source: transaction_amount
+        type: float64
+        description: "Transaction amount in USD"
+        
+      - name: quantity
+        source: quantity
+        type: int64
+        description: "Number of items purchased"
+        
+      - name: country
+        source: customer_location
+        type: string
+        description: "Customer country"
+        categorical: true
+        
+      - name: device_type
+        source: device_used
+        type: string
+        description: "Device used for transaction"
+        categorical: true
+        
+      - name: payment_method
+        source: payment_method
+        type: string
+        description: "Payment method used"
+        categorical: true
+        
+      - name: category
+        source: product_category
+        type: string
+        description: "Product category"
+        categorical: true
+        
+      - name: account_age_days
+        source: account_age_days
+        type: int64
+        description: "Days since account creation"
+        
+      - name: tx_hour
+        source: transaction_hour
+        type: int64
+        description: "Hour of transaction (0-23)"
+        
+      - name: tx_dayofweek
+        source: "EXTRACT(DOW FROM transaction_date)"
+        type: int64
+        description: "Day of week (0=Sunday, 6=Saturday)"
+        
+      - name: customer_age
+        source: customer_age
+        type: int64
+        description: "Customer age in years"
+        
+      - name: ip_address
+        source: ip_address
+        type: string
+        description: "IP address of transaction"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CALENDAR - Time-based features computed from timestamp
+  # ─────────────────────────────────────────────────────────────────────────────
+  calendar:
+    entity: [transaction]
+    ttl_days: 90
+    online: true
+    columns:
+      - name: transaction_day
+        type: int64
+        logic: extract_day
+        source_field: transaction_date
+        description: "Day of month (1-31)"
+        
+      - name: transaction_month
+        type: int64
+        logic: extract_month
+        source_field: transaction_date
+        description: "Month (1-12)"
+        
+      - name: is_weekend
+        type: int64
+        logic: is_weekend
+        source_field: transaction_date
+        description: "1 if Saturday/Sunday, 0 otherwise"
+        # SQL: CASE WHEN EXTRACT(DOW FROM date) IN (5, 6) THEN 1 ELSE 0 END
+        # Python: 1 if dayofweek in [5, 6] else 0
+        
+      - name: is_night
+        type: int64
+        logic: is_night
+        source_field: transaction_hour
+        params:
+          night_start: 22
+          night_end: 5
+        description: "1 if transaction between 10pm-5am, 0 otherwise"
+        # SQL: CASE WHEN hour >= 22 OR hour <= 5 THEN 1 ELSE 0 END
+        # Python: 1 if (hour >= 22 or hour <= 5) else 0
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ADDRESS - Geographic features
+  # ─────────────────────────────────────────────────────────────────────────────
+  address:
+    entity: [transaction]
+    ttl_days: 90
+    online: true
+    columns:
+      - name: shipping_country
+        type: string
+        logic: extract_country
+        source_field: shipping_address
+        categorical: true
+        description: "Country code from shipping address"
+        
+      - name: billing_country
+        type: string
+        logic: extract_country
+        source_field: billing_address
+        categorical: true
+        description: "Country code from billing address"
+        
+      - name: address_mismatch
+        type: int64
+        logic: not_equal
+        inputs: [shipping_country, billing_country]
+        description: "1 if shipping != billing country"
+        
+      - name: high_risk_shipping
+        type: int64
+        logic: in_list
+        source_field: shipping_country
+        params:
+          values: ["NG", "PK", "RU", "BR"]
+        description: "1 if shipping to high-risk country"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # BEHAVIORAL - Customer history using window functions
+  # ─────────────────────────────────────────────────────────────────────────────
+  customer_behavioral:
+    entity: [customer]
+    ttl_days: 90
+    online: true
+    columns:
+      - name: transactions_before
+        type: int64
+        logic: row_number_minus_one
+        partition_by: customer_id
+        order_by: transaction_date
+        description: "Number of transactions before this one"
+        
+      - name: total_spend_before
+        type: float64
+        logic: cumsum_exclusive
+        source_field: amount
+        partition_by: customer_id
+        order_by: transaction_date
+        description: "Total spend before this transaction"
+        
+      - name: avg_amount_before
+        type: float64
+        logic: cumavg_exclusive
+        source_field: amount
+        partition_by: customer_id
+        order_by: transaction_date
+        description: "Average transaction amount before this one"
+        
+      - name: customer_tenure_days
+        type: int64
+        logic: days_since_first
+        partition_by: customer_id
+        order_by: transaction_date
+        description: "Days since customer's first transaction"
+        
+      - name: days_since_last_tx
+        type: float64
+        logic: days_since_previous
+        partition_by: customer_id
+        order_by: transaction_date
+        default: 9999.0
+        description: "Days since previous transaction (9999 if first)"
+        
+      - name: is_new_customer
+        type: int64
+        logic: equals_zero
+        source_field: transactions_before
+        description: "1 if this is customer's first transaction"
+        
+      - name: is_very_new_account
+        type: int64
+        logic: less_than
+        source_field: account_age_days
+        params:
+          threshold: 2
+        description: "1 if account less than 2 days old"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # SPENDING WINDOWS - Time-windowed aggregations
+  # ─────────────────────────────────────────────────────────────────────────────
+  customer_spending:
+    entity: [customer]
+    ttl_days: 90
+    online: true
+    columns:
+      - name: total_spend_7d
+        type: float64
+        logic: window_sum
+        source_field: amount
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 7
+        description: "Total spend in last 7 days"
+        
+      - name: total_spend_30d
+        type: float64
+        logic: window_sum
+        source_field: amount
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 30
+        description: "Total spend in last 30 days"
+        
+      - name: tx_count_7d
+        type: int64
+        logic: window_count
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 7
+        description: "Transaction count in last 7 days"
+        
+      - name: tx_count_30d
+        type: int64
+        logic: window_count
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 30
+        description: "Transaction count in last 30 days"
+        
+      - name: avg_amount_30d
+        type: float64
+        logic: window_avg
+        source_field: amount
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 30
+        description: "Average transaction amount in last 30 days"
+        
+      - name: max_amount_30d
+        type: float64
+        logic: window_max
+        source_field: amount
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 30
+        description: "Maximum transaction amount in last 30 days"
+        
+      - name: num_countries_90d
+        type: int64
+        logic: window_count_distinct
+        source_field: shipping_country
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 90
+        description: "Number of distinct shipping countries in 90 days"
+        
+      - name: num_payment_methods_30d
+        type: int64
+        logic: window_count_distinct
+        source_field: payment_method
+        partition_by: customer_id
+        order_by: transaction_date
+        window_days: 30
+        description: "Number of distinct payment methods in 30 days"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # RISK INDICATORS - Derived features computed at inference time
+  # ─────────────────────────────────────────────────────────────────────────────
+  risk_indicators:
+    entity: [transaction]
+    ttl_days: 90
+    online: true
+    # NOTE: These are computed real-time at inference using current transaction
+    # The training table stores historical values for model training
+    realtime_compute: true
+    columns:
+      - name: amount_vs_avg
+        type: float64
+        logic: safe_divide
+        inputs: [amount, avg_amount_30d]
+        default: 1.0
+        description: "Current amount / 30-day average (1.0 if no history)"
+        
+      - name: is_high_amount_vs_hist
+        type: int64
+        logic: ratio_above_threshold
+        inputs: [amount, avg_amount_30d]
+        params:
+          threshold: 3.0
+        description: "1 if amount > 3x the 30-day average"
+        
+      - name: high_velocity
+        type: int64
+        logic: less_than
+        source_field: days_since_last_tx
+        params:
+          threshold: 0.25
+          exclude_default: true  # Don't flag first transactions
+        description: "1 if < 6 hours since last transaction"
+        
+      - name: risky_payment
+        type: int64
+        logic: in_list
+        source_field: payment_method
+        params:
+          values: ["credit_card", "wallet"]
+        description: "1 if using risky payment method"
+        
+      - name: risky_category
+        type: int64
+        logic: in_list
+        source_field: category
+        params:
+          values: ["Electronics", "Luxury", "Digital"]
+        description: "1 if purchasing from risky category"
+        
+      - name: ip_prefix
+        type: string
+        logic: split_first
+        source_field: ip_address
+        params:
+          delimiter: "."
+        categorical: true
+        description: "First octet of IP address"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODEL CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+model:
+  # Features used for training (in order)
+  feature_order:
+    - amount
+    - quantity
+    - country
+    - device_type
+    - payment_method
+    - category
+    - account_age_days
+    - tx_hour
+    - tx_dayofweek
+    - transaction_day
+    - transaction_month
+    - is_weekend
+    - is_night
+    - shipping_country
+    - billing_country
+    - address_mismatch
+    - high_risk_shipping
+    - transactions_before
+    - total_spend_before
+    - avg_amount_before
+    - customer_tenure_days
+    - days_since_last_tx
+    - is_new_customer
+    - is_very_new_account
+    - total_spend_7d
+    - total_spend_30d
+    - tx_count_7d
+    - tx_count_30d
+    - avg_amount_30d
+    - max_amount_30d
+    - num_countries_90d
+    - num_payment_methods_30d
+    - amount_vs_avg
+    - is_high_amount_vs_hist
+    - high_velocity
+    - risky_payment
+    - risky_category
+    - ip_prefix
+    
+  # Label column (uses human-reviewed when available via COALESCE in Gold table)
+  label: final_label
+  
+  # Also preserve original labels for analysis
+  label_columns:
+    - original_label: is_fraudulent     # Original synthetic/source label
+    - reviewed_label: reviewed_label    # Human-reviewed label (NULL if not reviewed)
+    - final_label: final_label          # Training target = COALESCE(reviewed, original)
+  
+  # Categorical columns that need encoding
+  categorical_columns:
+    - country
+    - device_type
+    - payment_method
+    - category
+    - ip_prefix
+    - shipping_country
+    - billing_country
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STREAMING FEATURES - ksqlDB real-time feature computation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+streaming:
+  # Kafka topics
+  source_topic: fraud.demo.fraud_transactions
+  output_topic: fraud.streaming.features
+  value_format: JSON
+
+  # Source stream schema (maps to Debezium CDC output)
+  source_schema:
+    - name: transaction_id
+      type: VARCHAR
+      key: true
+    - name: customer_id
+      type: VARCHAR
+    - name: transaction_amount
+      type: DOUBLE
+    - name: transaction_date
+      type: VARCHAR
+    - name: payment_method
+      type: VARCHAR
+    - name: product_category
+      type: VARCHAR
+    - name: quantity
+      type: INT
+    - name: customer_age
+      type: INT
+    - name: customer_location
+      type: VARCHAR
+    - name: device_used
+      type: VARCHAR
+    - name: ip_address
+      type: VARCHAR
+    - name: shipping_address
+      type: VARCHAR
+    - name: billing_address
+      type: VARCHAR
+    - name: is_fraudulent
+      type: INT
+    - name: account_age_days
+      type: INT
+    - name: transaction_hour
+      type: INT
+
+  # Enrichment features - computed from raw fields
+  enrichment:
+    - name: shipping_country
+      logic: extract_last_part
+      source_field: shipping_address
+      delimiter: ","
+      description: "Country from shipping address"
+
+    - name: billing_country
+      logic: extract_last_part
+      source_field: billing_address
+      delimiter: ","
+      description: "Country from billing address"
+
+    - name: address_mismatch
+      logic: not_equal
+      inputs: [shipping_address, billing_address]
+      description: "1 if shipping != billing address"
+
+    - name: is_night
+      logic: hour_in_range
+      source_field: transaction_hour
+      params:
+        start: 22
+        end: 5
+      description: "1 if transaction between 10pm-5am"
+
+    - name: is_weekend
+      logic: dayofweek_in
+      params:
+        days: [1, 7]
+      description: "1 if Saturday or Sunday"
+
+    - name: risky_payment
+      logic: in_list
+      source_field: payment_method
+      params:
+        values: ["credit_card", "wallet"]
+      description: "1 if risky payment method"
+
+    - name: risky_category
+      logic: in_list
+      source_field: product_category
+      params:
+        values: ["Electronics", "Luxury", "Digital"]
+      description: "1 if risky product category"
+
+    - name: ip_prefix
+      logic: split_first
+      source_field: ip_address
+      params:
+        delimiter: "."
+      description: "First octet of IP address"
+
+  # Tumbling window aggregations
+  windows:
+    - name: velocity_5min
+      duration_seconds: 300
+      type: tumbling
+      partition_by: customer_id
+      aggregations:
+        - name: tx_count_5min
+          function: count
+          description: "Transaction count in 5 minutes"
+        - name: amount_sum_5min
+          function: sum
+          field: transaction_amount
+          description: "Amount sum in 5 minutes"
+        - name: avg_amount_5min
+          function: avg
+          field: transaction_amount
+          description: "Average amount in 5 minutes"
+        - name: max_amount_5min
+          function: max
+          field: transaction_amount
+          description: "Max amount in 5 minutes"
+        - name: min_amount_5min
+          function: min
+          field: transaction_amount
+          description: "Min amount in 5 minutes"
+        - name: unique_devices_5min
+          function: count_distinct
+          field: device_used
+          description: "Unique devices in 5 minutes"
+        - name: unique_countries_5min
+          function: count_distinct
+          field: shipping_country
+          description: "Unique shipping countries in 5 minutes"
+        - name: unique_ip_prefixes_5min
+          function: count_distinct
+          field: ip_prefix
+          description: "Unique IP prefixes in 5 minutes"
+        - name: unique_payment_methods_5min
+          function: count_distinct
+          field: payment_method
+          description: "Unique payment methods in 5 minutes"
+        - name: address_mismatch_count_5min
+          function: sum
+          field: address_mismatch
+          description: "Address mismatches in 5 minutes"
+        - name: risky_payment_count_5min
+          function: sum
+          field: risky_payment
+          description: "Risky payments in 5 minutes"
+        - name: risky_category_count_5min
+          function: sum
+          field: risky_category
+          description: "Risky categories in 5 minutes"
+
+    - name: velocity_1h
+      duration_seconds: 3600
+      type: tumbling
+      partition_by: customer_id
+      aggregations:
+        - name: tx_count_1h
+          function: count
+          description: "Transaction count in 1 hour"
+        - name: amount_sum_1h
+          function: sum
+          field: transaction_amount
+          description: "Amount sum in 1 hour"
+        - name: avg_amount_1h
+          function: avg
+          field: transaction_amount
+          description: "Average amount in 1 hour"
+        - name: max_amount_1h
+          function: max
+          field: transaction_amount
+          description: "Max amount in 1 hour"
+        - name: min_amount_1h
+          function: min
+          field: transaction_amount
+          description: "Min amount in 1 hour"
+        - name: unique_devices_1h
+          function: count_distinct
+          field: device_used
+          description: "Unique devices in 1 hour"
+        - name: unique_ips_1h
+          function: count_distinct
+          field: ip_address
+          description: "Unique IPs in 1 hour"
+        - name: unique_countries_1h
+          function: count_distinct
+          field: shipping_country
+          description: "Unique countries in 1 hour"
+        - name: unique_categories_1h
+          function: count_distinct
+          field: product_category
+          description: "Unique categories in 1 hour"
+        - name: night_tx_count_1h
+          function: sum
+          field: is_night
+          description: "Night transactions in 1 hour"
+        - name: address_mismatch_count_1h
+          function: sum
+          field: address_mismatch
+          description: "Address mismatches in 1 hour"
+
+    - name: velocity_24h
+      duration_seconds: 86400
+      type: tumbling
+      partition_by: customer_id
+      aggregations:
+        - name: tx_count_24h
+          function: count
+          description: "Transaction count in 24 hours"
+        - name: amount_sum_24h
+          function: sum
+          field: transaction_amount
+          description: "Amount sum in 24 hours"
+        - name: avg_amount_24h
+          function: avg
+          field: transaction_amount
+          description: "Average amount in 24 hours"
+        - name: max_amount_24h
+          function: max
+          field: transaction_amount
+          description: "Max amount in 24 hours"
+        - name: min_amount_24h
+          function: min
+          field: transaction_amount
+          description: "Min amount in 24 hours"
+        - name: unique_countries_24h
+          function: count_distinct
+          field: shipping_country
+          description: "Unique countries in 24 hours"
+        - name: unique_payment_methods_24h
+          function: count_distinct
+          field: payment_method
+          description: "Unique payment methods in 24 hours"
+        - name: unique_devices_24h
+          function: count_distinct
+          field: device_used
+          description: "Unique devices in 24 hours"
+        - name: unique_ips_24h
+          function: count_distinct
+          field: ip_address
+          description: "Unique IPs in 24 hours"
+        - name: weekend_tx_count_24h
+          function: sum
+          field: is_weekend
+          description: "Weekend transactions in 24 hours"
+        - name: night_tx_count_24h
+          function: sum
+          field: is_night
+          description: "Night transactions in 24 hours"
+        - name: address_mismatch_count_24h
+          function: sum
+          field: address_mismatch
+          description: "Address mismatches in 24 hours"
+
+  # Computed flags (derived from velocity aggregates)
+  computed_flags:
+    - name: velocity_score
+      logic: case_threshold
+      description: "Composite velocity risk score (0-1)"
+      cases:
+        - condition: "tx_count_5min > 5"
+          value: 1.0
+        - condition: "tx_count_5min > 3"
+          value: 0.9
+        - condition: "tx_count_1h > 20"
+          value: 0.8
+        - condition: "tx_count_1h > 10"
+          value: 0.6
+        - condition: "tx_count_24h > 50"
+          value: 0.5
+        - condition: "tx_count_24h > 30"
+          value: 0.4
+        - default: "tx_count_5min * 0.1"
+
+    - name: multi_country_flag
+      logic: greater_than
+      source_field: unique_countries_5min
+      params:
+        threshold: 1
+      description: "1 if multiple countries in 5min"
+
+    - name: multi_device_flag
+      logic: greater_than
+      source_field: unique_devices_5min
+      params:
+        threshold: 1
+      description: "1 if multiple devices in 5min"
+
+    - name: high_velocity_flag
+      logic: or_conditions
+      conditions:
+        - field: tx_count_5min
+          operator: ">"
+          value: 3
+        - field: tx_count_1h
+          operator: ">"
+          value: 15
+        - field: unique_countries_5min
+          operator: ">"
+          value: 1
+      description: "Composite high velocity indicator"
+
+    - name: amount_anomaly_flag
+      logic: ratio_above_threshold
+      inputs: [amount, avg_amount_24h]
+      params:
+        threshold: 3.0
+      description: "1 if amount > 3x 24h average"
+
+  # Redis output mapping
+  redis:
+    prefix: "feast:streaming:"
+    ttl_seconds: 3600
+    key_field: customer_id
+    output_fields:
+      - transaction_id
+      - customer_id
+      - amount
+      - tx_count_5min
+      - amount_sum_5min
+      - avg_amount_5min
+      - unique_devices_5min
+      - tx_count_1h
+      - amount_sum_1h
+      - avg_amount_1h
+      - unique_ips_1h
+      - tx_count_24h
+      - amount_sum_24h
+      - avg_amount_24h
+      - unique_countries_24h
+      - velocity_score
+      - multi_country_flag
+      - multi_device_flag
+      - high_velocity_flag
+      - amount_anomaly_flag
+      - address_mismatch
+      - is_night
+      - is_weekend
+      - risky_payment
+      - risky_category

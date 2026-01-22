@@ -1,0 +1,325 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "gridPos": {"h": 2, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "content": "# 🔍 Fraud Detection MLOps Dashboard\nReal-time monitoring of model performance, A/B tests, and data quality",
+        "mode": "markdown"
+      },
+      "type": "text"
+    },
+    {
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 2},
+      "id": 2,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "red", "value": 100}
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"expr": "sum(rate(fraud_predictions_total[5m]))", "legendFormat": "Total"}
+      ],
+      "title": "📊 Prediction Rate",
+      "type": "stat"
+    },
+    {
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 2},
+      "id": 3,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 100},
+              {"color": "red", "value": 200}
+            ]
+          },
+          "unit": "ms"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(fraud_prediction_latency_seconds_bucket[5m])) by (le)) * 1000", "legendFormat": "P99"}
+      ],
+      "title": "⏱️ P99 Latency (ms)",
+      "type": "stat"
+    },
+    {
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 2},
+      "id": 4,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 1}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"expr": "sum(rate(fraud_predictions_total{status=\"error\"}[5m])) / sum(rate(fraud_predictions_total[5m])) * 100", "legendFormat": "Error Rate"}
+      ],
+      "title": "❌ Error Rate",
+      "type": "stat"
+    },
+    {
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 2},
+      "id": 5,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 15}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"expr": "sum(rate(fraud_predictions_total{is_fraud=\"true\", variant=\"control\"}[5m])) / sum(rate(fraud_predictions_total{variant=\"control\"}[5m])) * 100", "legendFormat": "Control"}
+      ],
+      "title": "🎯 Control Fraud %",
+      "type": "stat"
+    },
+    {
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 2},
+      "id": 50,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 15}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"expr": "sum(rate(fraud_predictions_total{is_fraud=\"true\", variant=\"treatment\"}[5m])) / sum(rate(fraud_predictions_total{variant=\"treatment\"}[5m])) * 100", "legendFormat": "Treatment"}
+      ],
+      "title": "🧪 Treatment Fraud %",
+      "type": "stat"
+    },
+    {
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 2},
+      "id": 51,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0},
+              {"color": "green", "value": 2}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"expr": "(sum(rate(fraud_predictions_total{is_fraud=\"true\", variant=\"treatment\"}[5m])) / sum(rate(fraud_predictions_total{variant=\"treatment\"}[5m])) - sum(rate(fraud_predictions_total{is_fraud=\"true\", variant=\"control\"}[5m])) / sum(rate(fraud_predictions_total{variant=\"control\"}[5m]))) * 100", "legendFormat": "Δ"}
+      ],
+      "title": "📈 Treatment Δ",
+      "type": "stat"
+    },
+    {
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 6},
+      "id": 6,
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
+        }
+      },
+      "options": {
+        "legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(fraud_score_distribution_bucket{variant=\"control\"}[5m])) by (le))", "legendFormat": "Control P50"},
+        {"expr": "histogram_quantile(0.50, sum(rate(fraud_score_distribution_bucket{variant=\"treatment\"}[5m])) by (le))", "legendFormat": "Treatment P50"},
+        {"expr": "histogram_quantile(0.90, sum(rate(fraud_score_distribution_bucket{variant=\"control\"}[5m])) by (le))", "legendFormat": "Control P90"},
+        {"expr": "histogram_quantile(0.90, sum(rate(fraud_score_distribution_bucket{variant=\"treatment\"}[5m])) by (le))", "legendFormat": "Treatment P90"}
+      ],
+      "title": "📈 Fraud Score: Control vs Treatment",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 6},
+      "id": 7,
+      "options": {
+        "legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"expr": "sum(rate(ab_traffic_total{variant=\"control\"}[5m]))", "legendFormat": "Control"},
+        {"expr": "sum(rate(ab_traffic_total{variant=\"treatment\"}[5m]))", "legendFormat": "Treatment"}
+      ],
+      "title": "🔬 A/B Traffic Split",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 13},
+      "id": 8,
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "options": {
+        "legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(fraud_prediction_latency_seconds_bucket{variant=\"control\"}[5m])) by (le)) * 1000", "legendFormat": "Control P99"},
+        {"expr": "histogram_quantile(0.99, sum(rate(fraud_prediction_latency_seconds_bucket{variant=\"treatment\"}[5m])) by (le)) * 1000", "legendFormat": "Treatment P99"},
+        {"expr": "histogram_quantile(0.50, sum(rate(fraud_prediction_latency_seconds_bucket{variant=\"control\"}[5m])) by (le)) * 1000", "legendFormat": "Control P50"},
+        {"expr": "histogram_quantile(0.50, sum(rate(fraud_prediction_latency_seconds_bucket{variant=\"treatment\"}[5m])) by (le)) * 1000", "legendFormat": "Treatment P50"}
+      ],
+      "title": "⚡ Latency: Control vs Treatment",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 13},
+      "id": 52,
+      "fieldConfig": {"defaults": {"unit": "percent"}},
+      "options": {
+        "legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"expr": "sum(rate(fraud_predictions_total{is_fraud=\"true\", variant=\"control\"}[5m])) / sum(rate(fraud_predictions_total{variant=\"control\"}[5m])) * 100", "legendFormat": "Control Fraud Rate"},
+        {"expr": "sum(rate(fraud_predictions_total{is_fraud=\"true\", variant=\"treatment\"}[5m])) / sum(rate(fraud_predictions_total{variant=\"treatment\"}[5m])) * 100", "legendFormat": "Treatment Fraud Rate"}
+      ],
+      "title": "🎯 Fraud Rate: Control vs Treatment",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 20},
+      "id": 53,
+      "options": {
+        "legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"expr": "sum by (risk_level) (rate(fraud_predictions_total{variant=\"control\"}[5m]))", "legendFormat": "Control {{risk_level}}"},
+        {"expr": "sum by (risk_level) (rate(fraud_predictions_total{variant=\"treatment\"}[5m]))", "legendFormat": "Treatment {{risk_level}}"}
+      ],
+      "title": "📊 Risk Levels: Control vs Treatment",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 20},
+      "id": 9,
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.1},
+              {"color": "red", "value": 0.2}
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"expr": "feature_drift_psi", "legendFormat": "{{ feature }}"}
+      ],
+      "title": "📊 Feature Drift (PSI)",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 27},
+      "id": 10,
+      "options": {"showHeader": true},
+      "targets": [
+        {"expr": "ALERTS{alertstate=\"firing\"}", "format": "table", "instant": true}
+      ],
+      "title": "🚨 Active Alerts",
+      "type": "table",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "Value": true},
+            "renameByName": {"alertname": "Alert", "severity": "Severity", "team": "Team"}
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["fraud-detection", "mlops", "ab-testing"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Fraud Detection MLOps",
+  "uid": "fraud-ops",
+  "version": 2
+}

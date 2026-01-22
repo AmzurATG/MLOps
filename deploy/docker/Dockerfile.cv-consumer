@@ -1,0 +1,53 @@
+# Dockerfile.cv-consumer
+# CVOps Kafka Ingestion Consumer
+# Real-time consumer for image metadata ingestion
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    librdkafka-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    confluent-kafka>=2.3.0 \
+    kafka-python>=2.0.0 \
+    requests>=2.31.0 \
+    minio>=7.2.0 \
+    trino>=0.328.0 \
+    python-dotenv>=1.0.0
+
+# Copy application code from cvops module (new location)
+COPY src/cvops/streaming/ /app/streaming/
+COPY src/cvops/pipelines/ /app/pipelines/
+COPY src/core/ /app/core/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Environment variables (can be overridden in docker-compose)
+ENV KAFKA_BOOTSTRAP_SERVERS=exp-kafka:9092
+ENV CVOPS_KAFKA_INGEST_TOPIC=cv.images.ingest
+ENV CVOPS_KAFKA_DLQ_TOPIC=cv.images.dlq
+ENV CVOPS_KAFKA_VALIDATED_TOPIC=cv.images.validated
+ENV CVOPS_KAFKA_CONSUMER_GROUP=cvops-ingest-consumer
+ENV LAKEFS_SERVER=http://exp-lakefs:8000
+ENV CVOPS_REPO=cv-data
+ENV CVOPS_BRANCH=dev-cvops
+ENV TRINO_HOST=exp-trino
+ENV TRINO_PORT=8080
+ENV MINIO_ENDPOINT=http://exp-minio:9000
+
+# Health check endpoint (consumer exposes a simple HTTP status on port 8080)
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('${KAFKA_BOOTSTRAP_SERVERS%%:*}', 9092)); s.close()" || exit 1
+
+# Run the consumer from cvops module
+CMD ["python", "streaming/ingest_consumer.py"]

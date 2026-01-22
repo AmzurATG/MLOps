@@ -1,0 +1,34 @@
+# Traefik v2.x Static Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# API and Dashboard
+api:
+  dashboard: true
+  insecure: true
+
+# Logging
+log:
+  level: INFO
+
+# Entrypoints
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+# Providers
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: exp-lakehouse
+    watch: true
+
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+# Ping for health check
+ping:
+  entryPoint: web

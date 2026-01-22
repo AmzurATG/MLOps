@@ -1,0 +1,126 @@
+# Gold Layer Quality Expectations
+# Feature-engineered training data validation
+# ════════════════════════════════════════════════════════════════════════════════
+
+expectation_suite_name: gold_fraud_training_data
+
+expectations:
+  # Primary identifiers
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: transaction_id
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: customer_id
+    meta:
+      severity: critical
+
+  # Primitive features
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: amount
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: amount
+      min_value: 0.01
+      max_value: 500000
+    meta:
+      severity: warning
+
+  # Aggregate features
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: transactions_before
+      mostly: 0.95
+    meta:
+      severity: warning
+
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: transactions_before
+      min_value: 0
+      max_value: 100000
+    meta:
+      severity: warning
+
+  # Derived features
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: is_weekend
+      value_set: [0, 1]
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: is_night
+      value_set: [0, 1]
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: tx_hour
+      min_value: 0
+      max_value: 23
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_be_between
+    kwargs:
+      column: tx_dayofweek
+      min_value: 0
+      max_value: 6
+    meta:
+      severity: critical
+
+  # Label validation
+  - expectation_type: expect_column_values_to_not_be_null
+    kwargs:
+      column: is_fraudulent
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_values_to_be_in_set
+    kwargs:
+      column: is_fraudulent
+      value_set: [0, 1]
+    meta:
+      severity: critical
+
+  - expectation_type: expect_column_mean_to_be_between
+    kwargs:
+      column: is_fraudulent
+      min_value: 0.01
+      max_value: 0.15
+    meta:
+      severity: warning
+      description: "Fraud rate should be between 1% and 15%"
+
+  # Training data size
+  - expectation_type: expect_table_row_count_to_be_between
+    kwargs:
+      min_value: 100
+      max_value: 10000000
+    meta:
+      severity: critical
+
+  # No duplicate samples
+  - expectation_type: expect_column_values_to_be_unique
+    kwargs:
+      column: transaction_id
+    meta:
+      severity: critical
+
+meta:
+  layer: gold
+  domain: fraud_detection
+  owner: ml-engineering
+  upstream: silver_fraud_transactions
+  downstream: model_training

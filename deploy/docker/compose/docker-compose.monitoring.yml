@@ -1,0 +1,144 @@
+# ============================================================================
+# MONITORING & OBSERVABILITY STACK
+# Prometheus, Grafana, and AlertManager for platform metrics
+# ============================================================================
+#
+# Usage:
+#   docker compose -f docker-compose.core.yml -f docker-compose.monitoring.yml up -d
+#
+# Requires: docker-compose.core.yml
+#
+# Includes:
+#   - Prometheus (metrics collection)
+#   - Grafana (dashboards)
+#   - AlertManager (alerting)
+#   - Redis Exporter (Redis metrics)
+#   - Kafka Exporter (Kafka metrics)
+# ============================================================================
+
+volumes:
+  exp-prometheus-data:
+  exp-grafana-data:
+  exp-alertmanager-data:
+
+services:
+  # ==========================================================================
+  # PROMETHEUS
+  # ==========================================================================
+  exp-prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: exp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../../../config/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ../../../config/monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - exp-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # GRAFANA
+  # ==========================================================================
+  exp-grafana:
+    image: grafana/grafana:11.3.0
+    container_name: exp-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../../../config/monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ../../../config/monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - exp-grafana-data:/var/lib/grafana
+    depends_on:
+      - exp-prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # ALERTMANAGER
+  # ==========================================================================
+  exp-alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: exp-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../../../config/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - exp-alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # REDIS EXPORTER
+  # ==========================================================================
+  exp-redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: exp-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: exp-redis:6379
+    depends_on:
+      exp-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9121/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - exp-lakehouse
+    restart: "no"
+
+  # ==========================================================================
+  # KAFKA EXPORTER
+  # ==========================================================================
+  exp-kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    container_name: exp-kafka-exporter
+    ports:
+      - "9308:9308"
+    command:
+      - '--kafka.server=exp-kafka:9092'
+      - '--web.listen-address=:9308'
+    depends_on:
+      exp-kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9308/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - exp-lakehouse
+    restart: "no"

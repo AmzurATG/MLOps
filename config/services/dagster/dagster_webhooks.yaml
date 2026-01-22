@@ -1,0 +1,23 @@
+name: Dagster Webhook Integration
+description: Notify Dagster on commits, merges, and reverts
+
+on:
+  post-commit:
+    branches:
+      - dev
+      - main
+  post-merge:
+    branches:
+      - dev
+      - main
+  post-revert:
+    branches:
+      - dev
+      - main
+
+hooks:
+  - id: dagster_webhook
+    type: webhook
+    properties:
+      url: "http://lakefs-webhook-receiver:5000/lakefs-webhook"
+      timeout: 10s

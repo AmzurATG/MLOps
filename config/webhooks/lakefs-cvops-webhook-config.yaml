@@ -1,0 +1,185 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# LakeFS Actions Configuration for CVOps
+# Configure webhooks to notify Dagster on commits and reverts for cv-data repo
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# File location: _lakefs_actions/cvops_webhooks.yaml
+# (Place in cv-data LakeFS repository root)
+#
+# Separate from MLOps webhook config to allow independent deployment
+# ═════════════════════════════════════════════════════════════════════════════
+
+name: cvops_dagster_integration
+description: Notify Dagster on CVOps commits, reverts, and merges
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Action 1: Notify on Revert (CRITICAL)
+# Triggers cleanup when images are reverted - may need to reprocess detections
+# ═════════════════════════════════════════════════════════════════════════════
+on:
+  post-revert:
+    branches:
+      - dev-cvops
+      - main
+      - experiment-*
+      - feature-*
+
+hooks:
+  - id: notify_cvops_revert
+    type: webhook
+    properties:
+      url: http://unified-webhook:5000/cvops-webhook
+      timeout: 10s
+      query_params:
+        source: lakefs
+        domain: cvops
+        event_type: revert
+      headers:
+        Content-Type: application/json
+        X-LakeFS-Signature: ${CVOPS_WEBHOOK_SECRET}
+
+---
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Action 2: Notify on Commit (NEW IMAGES)
+# Triggers when new images are uploaded - queue for detection pipeline
+# ═════════════════════════════════════════════════════════════════════════════
+name: cvops_track_commits
+description: Track new image uploads in CVOps
+
+on:
+  post-commit:
+    branches:
+      - dev-cvops
+      - experiment-*
+      - feature-*
+
+hooks:
+  - id: notify_cvops_commit
+    type: webhook
+    properties:
+      url: http://unified-webhook:5000/cvops-webhook
+      timeout: 10s
+      query_params:
+        source: lakefs
+        domain: cvops
+        event_type: commit
+      headers:
+        Content-Type: application/json
+        X-LakeFS-Signature: ${CVOPS_WEBHOOK_SECRET}
+
+---
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Action 3: Notify on Merge (PROMOTION)
+# Triggers when dev-cvops is merged to main - production promotion
+# ═════════════════════════════════════════════════════════════════════════════
+name: cvops_track_merges
+description: Track CVOps branch merges (promotion to production)
+
+on:
+  post-merge:
+    branches:
+      - main
+      - dev-cvops
+
+hooks:
+  - id: notify_cvops_merge
+    type: webhook
+    properties:
+      url: http://unified-webhook:5000/cvops-webhook
+      timeout: 10s
+      query_params:
+        source: lakefs
+        domain: cvops
+        event_type: merge
+      headers:
+        Content-Type: application/json
+        X-LakeFS-Signature: ${CVOPS_WEBHOOK_SECRET}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SETUP INSTRUCTIONS
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# 1. Create the cv-data repository in LakeFS (if not exists):
+#    lakectl repo create lakefs://cv-data s3://lakefs/cv-data
+#
+# 2. Create the dev-cvops branch:
+#    lakectl branch create lakefs://cv-data/dev-cvops --source lakefs://cv-data/main
+#
+# 3. Create directory in your LakeFS repository:
+#    lakectl fs upload lakefs://cv-data/dev-cvops/_lakefs_actions/cvops_webhooks.yaml \
+#      --source lakefs-cvops-webhook-config.yaml
+#
+# 4. Set webhook secret in environment:
+#    export CVOPS_WEBHOOK_SECRET="your-cvops-secret-key-here"
+#
+# 5. Commit the actions file:
+#    lakectl commit lakefs://cv-data/dev-cvops \
+#      -m "Add CVOps Dagster webhook integration"
+#
+# 6. Verify actions are loaded:
+#    lakectl actions list lakefs://cv-data/dev-cvops
+#
+# 7. Test webhook (upload an image):
+#    lakectl fs upload lakefs://cv-data/dev-cvops/raw/images/test.jpg \
+#      --source test.jpg
+#    lakectl commit lakefs://cv-data/dev-cvops -m "Test image upload"
+#
+# 8. Check webhook logs:
+#    docker logs cvops-webhook
+#
+# ═════════════════════════════════════════════════════════════════════════════
+# CVOps SPECIFIC EVENTS
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Post-Commit Event (new images):
+# {
+#   "event_type": "post-commit",
+#   "repository_id": "cv-data",
+#   "branch_id": "dev-cvops",
+#   "commit_id": "abc123...",
+#   "committer": "user@example.com",
+#   "message": "Upload batch of security camera images",
+#   "diff": [
+#     {"path": "raw/images/cam01/2024/12/05/img_001.jpg", "type": "added"},
+#     {"path": "raw/images/cam01/2024/12/05/img_002.jpg", "type": "added"}
+#   ]
+# }
+#
+# Post-Revert Event (cleanup required):
+# {
+#   "event_type": "post-revert",
+#   "repository_id": "cv-data",
+#   "branch_id": "dev-cvops",
+#   "commit_id": "new-commit-after-revert",
+#   "reverted_commit_id": "abc123...",
+#   "committer": "user@example.com"
+# }
+# -> Triggers: Delete detections for reverted images, update cv.image_metadata
+#
+# Post-Merge Event (promotion):
+# {
+#   "event_type": "post-merge",
+#   "repository_id": "cv-data",
+#   "branch_id": "main",
+#   "source_branch": "dev-cvops",
+#   "commit_id": "def456...",
+#   "committer": "user@example.com"
+# }
+# -> Triggers: Promote training data to production, update model registry
+#
+# ═════════════════════════════════════════════════════════════════════════════
+# DAGSTER SENSOR INTEGRATION
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# The cvops_webhook_sensor in Dagster polls the cv.lakefs_webhook_events table
+# and triggers appropriate actions:
+#
+# - post-commit with images → Trigger cvops_ingestion_job
+# - post-revert → Trigger cleanup job (delete orphaned detections)
+# - post-merge to main → Trigger promotion job
+#
+# See: pipelines/cvops/sensors.py
+#
+# ═════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,14 @@
+# LiteLLM with MLflow Integration
+# ================================
+# Extends the official LiteLLM image to add MLflow support
+#
+# Build: docker build -f docker/Dockerfile.litellm -t litellm-mlflow:latest .
+# ================================
+
+FROM ghcr.io/berriai/litellm:main-latest
+
+# Install MLflow for callback support
+RUN pip install --no-cache-dir mlflow>=2.10.0
+
+# Verify installation
+RUN python -c "import mlflow; print(f'MLflow {mlflow.__version__} installed successfully')"

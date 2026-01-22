@@ -1,0 +1,28 @@
+# Requirements for CVOps Detection API
+# Note: torch and ultralytics are installed separately in Dockerfile
+
+# API Framework
+fastapi>=0.108.0
+uvicorn[standard]>=0.22.0
+python-multipart>=0.0.6
+
+# Data Processing
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
+
+# MLflow for model loading
+mlflow>=2.10.0
+
+# Kafka for write-back
+confluent-kafka>=2.2.0
+
+# Monitoring
+prometheus-client>=0.17.0
+
+# Pydantic for data validation
+pydantic>=2.0.0
+
+# HTTP client
+httpx>=0.25.0
+requests>=2.31.0

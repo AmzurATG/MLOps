@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Install MLflow with postgres and s3 support
+RUN pip install --no-cache-dir \
+    mlflow>=2.10.0 \
+    psycopg2-binary \
+    boto3
+
+# Set environment
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+# Expose port
+EXPOSE 5000
+
+# Default command (usually overridden by docker-compose)
+CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000"]

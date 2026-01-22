@@ -1,0 +1,142 @@
+# Prometheus Alert Rules for MLOps Platform
+# ════════════════════════════════════════════════════════════════════════════════
+
+groups:
+  # Model Serving Alerts
+  - name: model_serving
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          rate(fraud_predictions_total{status="error"}[5m]) 
+          / rate(fraud_predictions_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "High error rate in fraud prediction API"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, 
+            rate(fraud_prediction_latency_seconds_bucket[5m])
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P99 latency in fraud prediction API"
+          description: "P99 latency is {{ $value | humanizeDuration }}"
+
+      - alert: LowThroughput
+        expr: rate(fraud_predictions_total[5m]) < 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low prediction throughput"
+
+      - alert: ModelNotResponding
+        expr: up{job="fraud-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fraud API is down"
+
+  # Drift Detection Alerts
+  - name: drift_detection
+    rules:
+      - alert: FeatureDriftDetected
+        expr: feature_drift_psi > 0.15
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Feature drift detected"
+          description: "PSI {{ $value }} for {{ $labels.feature }}"
+
+      - alert: PredictionDriftDetected
+        expr: prediction_drift_score > 0.20
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prediction distribution drift"
+
+      - alert: FraudRateAnomaly
+        expr: |
+          abs(
+            avg_over_time(fraud_rate[1h]) 
+            - avg_over_time(fraud_rate[24h])
+          ) / avg_over_time(fraud_rate[24h]) > 0.3
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fraud rate changed significantly"
+
+  # A/B Test Alerts
+  - name: ab_testing
+    rules:
+      - alert: TreatmentDegrading
+        expr: |
+          (
+            rate(fraud_predictions_total{variant="treatment", status="error"}[1h])
+            / rate(fraud_predictions_total{variant="treatment"}[1h])
+          ) > 1.5 * (
+            rate(fraud_predictions_total{variant="control", status="error"}[1h])
+            / rate(fraud_predictions_total{variant="control"}[1h])
+          )
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Treatment variant error rate 50% higher than control"
+
+  # Infrastructure Alerts
+  - name: infrastructure
+    rules:
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka is down"
+
+      - alert: MLflowDown
+        expr: up{job="mlflow"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MLflow is down"
+
+  # Data Quality Alerts
+  - name: data_quality
+    rules:
+      - alert: DataQualityCheckFailed
+        expr: data_quality_passed == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Data quality check failed for {{ $labels.layer }}"
+
+      - alert: DataFreshness
+        expr: time() - max(data_last_updated_timestamp) > 3600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No new data in over 1 hour"

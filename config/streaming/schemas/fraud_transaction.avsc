@@ -1,0 +1,108 @@
+{
+  "type": "record",
+  "name": "FraudTransaction",
+  "namespace": "com.fraud.streaming",
+  "doc": "Schema for fraud transaction events from ksqlDB streaming pipeline",
+  "fields": [
+    {
+      "name": "customer_id",
+      "type": "string",
+      "doc": "Unique customer identifier"
+    },
+    {
+      "name": "transaction_id",
+      "type": "string",
+      "doc": "Unique transaction identifier"
+    },
+    {
+      "name": "amount",
+      "type": "double",
+      "doc": "Transaction amount in USD"
+    },
+    {
+      "name": "transaction_hour",
+      "type": "int",
+      "doc": "Hour of transaction (0-23)"
+    },
+    {
+      "name": "address_mismatch",
+      "type": "int",
+      "default": 0,
+      "doc": "1 if shipping/billing address mismatch, 0 otherwise"
+    },
+    {
+      "name": "is_night",
+      "type": "int",
+      "default": 0,
+      "doc": "1 if transaction between 22:00-06:00, 0 otherwise"
+    },
+    {
+      "name": "is_weekend",
+      "type": "int",
+      "default": 0,
+      "doc": "1 if transaction on Saturday/Sunday, 0 otherwise"
+    },
+    {
+      "name": "risky_payment",
+      "type": "int",
+      "default": 0,
+      "doc": "1 if using risky payment method (credit_card, wallet)"
+    },
+    {
+      "name": "risky_category",
+      "type": "int",
+      "default": 0,
+      "doc": "1 if product category is high-risk (Electronics, Luxury, Digital)"
+    },
+    {
+      "name": "high_risk_shipping",
+      "type": "int",
+      "default": 0,
+      "doc": "1 if shipping to high-risk country"
+    },
+    {
+      "name": "shipping_country",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "2-letter country code for shipping address"
+    },
+    {
+      "name": "billing_country",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "2-letter country code for billing address"
+    },
+    {
+      "name": "ip_prefix",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "First octet of IP address"
+    },
+    {
+      "name": "device_used",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Device type: mobile, desktop, tablet"
+    },
+    {
+      "name": "payment_method",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Payment method: credit_card, debit_card, wallet, bank_transfer"
+    },
+    {
+      "name": "product_category",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Product category for the transaction"
+    },
+    {
+      "name": "event_timestamp",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "Event timestamp in milliseconds since epoch"
+    }
+  ]
+}

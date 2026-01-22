@@ -1,0 +1,66 @@
+<View>
+  <Header value="Fraud Transaction Review"/>
+  
+  <View style="box-shadow: 2px 2px 5px #999; padding: 20px; margin-top: 2em; border-radius: 5px;">
+    <View style="display: flex; justify-content: space-between;">
+      <View>
+        <Header value="Transaction Details" size="4"/>
+        <Text name="tx_id" value="Transaction ID: $transaction_id"/>
+        <Text name="cust_id" value="Customer ID: $customer_id"/>
+        <Text name="amount" value="Amount: $$$amount" style="font-size: 18px; font-weight: bold; color: #d32f2f;"/>
+        <Text name="date" value="Date: $date"/>
+      </View>
+      <View>
+        <Header value="Payment Info" size="4"/>
+        <Text name="payment" value="Method: $payment_method"/>
+        <Text name="category" value="Category: $category"/>
+        <Text name="quantity" value="Quantity: $quantity"/>
+        <Text name="hour" value="Hour: $transaction_hour"/>
+      </View>
+    </View>
+    
+    <View style="margin-top: 20px;">
+      <Header value="Customer Info" size="4"/>
+      <Text name="location" value="Location: $location"/>
+      <Text name="age" value="Age: $customer_age"/>
+      <Text name="device" value="Device: $device"/>
+      <Text name="account_age" value="Account Age: $account_age_days days"/>
+    </View>
+    
+    <View style="margin-top: 20px; padding: 10px; background-color: #f5f5f5; border-radius: 5px;">
+      <Header value="Risk Indicators" size="4"/>
+      <Text name="ip" value="IP: $ip"/>
+      <Text name="shipping" value="Shipping: $shipping"/>
+      <Text name="billing" value="Billing: $billing"/>
+      <Text name="original" value="Original Label: $original_label" style="font-weight: bold;"/>
+    </View>
+  </View>
+  
+  <View style="margin-top: 30px;">
+    <Header value="Your Review" size="3"/>
+    <Choices name="fraud_label" toName="tx_id" choice="single" required="true">
+      <Choice value="fraud" style="background-color: #ffebee;"/>
+      <Choice value="legit" style="background-color: #e8f5e9;"/>
+      <Choice value="suspicious" style="background-color: #fff3e0;"/>
+    </Choices>
+    
+    <Header value="Confidence Level" size="4"/>
+    <Rating name="confidence" toName="tx_id" maxRating="5" icon="star" size="medium" required="true"/>
+    
+    <Header value="Review Notes" size="4"/>
+    <TextArea name="notes" toName="tx_id" 
+              placeholder="Add review notes: Why is this fraud/legit? Any patterns noticed?"
+              rows="4" maxSubmissions="1"/>
+    
+    <Header value="Risk Factors (Select all that apply)" size="4"/>
+    <Choices name="risk_factors" toName="tx_id" choice="multiple">
+      <Choice value="high_amount"/>
+      <Choice value="unusual_location"/>
+      <Choice value="new_account"/>
+      <Choice value="address_mismatch"/>
+      <Choice value="unusual_hour"/>
+      <Choice value="suspicious_device"/>
+      <Choice value="velocity_pattern"/>
+    </Choices>
+  </View>
+</View>
