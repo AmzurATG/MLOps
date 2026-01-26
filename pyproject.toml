@@ -43,7 +43,7 @@ dependencies = [
     
     # Data Processing
     "pandas>=2.2.0",  # pandas 2.2+ supports numpy 2.x
-    "pyarrow==17.0.0",
+    "pyarrow==21.0.0",
     "duckdb==0.10.0",
     
     # API & Requests
